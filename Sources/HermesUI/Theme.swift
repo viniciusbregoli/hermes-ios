@@ -1,22 +1,77 @@
 import SwiftUI
 import HermesKit
 
-/// The desktop's default `nous` skin (apps/shared/src/theme-presets.ts).
+/// One set of colors for a theme. Values come from the desktop's presets
+/// (apps/shared/src/theme-presets.ts, apps/desktop/src/themes).
+public struct Slots: Hashable, Sendable {
+    var background, foreground, sidebar, primary, muted, border, userBubble, destructive, success: UInt32
+    /// Text on top of `primary` (send button, Run).
+    var onPrimary: UInt32 = 0xffffff
+}
+
+public struct Palette: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    /// nil for dark-only themes; the app then forces dark mode.
+    let light: Slots?
+    let dark: Slots
+    /// Monospaced text everywhere (Matrix).
+    var monospaced = false
+    var radius: CGFloat = 6
+
+    static let nous = Palette(
+        id: "nous", name: "Nous",
+        light: Slots(background: 0xffffff, foreground: 0x1f2328, sidebar: 0xf6f8fa, primary: 0x0053fd, muted: 0x656d76,
+                     border: 0xd0d7de, userBubble: 0xdae7fd, destructive: 0xcf222e, success: 0x1f8a65),
+        dark: Slots(background: 0x0d1117, foreground: 0xe6edf3, sidebar: 0x010409, primary: 0x4a84fe, muted: 0x7d8590,
+                    border: 0x30363d, userBubble: 0x07162c, destructive: 0xf85149, success: 0x55a583))
+
+    /// Desktop "Catppuccin (Latte / Mocha)": Latte in light mode, Mocha in dark.
+    static let catppuccin = Palette(
+        id: "catppuccin", name: "Catppuccin",
+        light: Slots(background: 0xeff1f5, foreground: 0x4c4f69, sidebar: 0xe6e9ef, primary: 0x6d2ebf, muted: 0x8c8fa1,
+                     border: 0xacb0be, userBubble: 0xd7d3e9, destructive: 0xd20f39, success: 0x40a02b),
+        dark: Slots(background: 0x1e1e2e, foreground: 0xcdd6f4, sidebar: 0x181825, primary: 0xcba6f7, muted: 0x7f849c,
+                    border: 0x585b70, userBubble: 0x38324b, destructive: 0xf38ba8, success: 0xa6e3a1))
+
+    /// The desktop's "Cyberpunk" preset ("Neon green on black, matrix terminal"). Dark only, monospaced.
+    /// The bubble uses the preset's `secondary` green so it stays visible on the near-black background.
+    static let matrix = Palette(
+        id: "matrix", name: "Matrix", light: nil,
+        dark: Slots(background: 0x000a00, foreground: 0x00ff41, sidebar: 0x001200, primary: 0x00ff41, muted: 0x1a8a30,
+                    border: 0x003000, userBubble: 0x002800, destructive: 0xff003c, success: 0x00ba75, onPrimary: 0x000a00),
+        monospaced: true)
+
+    public static let all: [Palette] = [nous, catppuccin, matrix]
+
+    public static func named(_ id: String) -> Palette { all.first { $0.id == id } ?? nous }
+}
+
+/// Colors for the current palette. Views read these statically; RootView sets `palette`
+/// and rebuilds the view tree when the theme changes.
 public enum Theme {
-    public static let background = dynamic(0xffffff, 0x0d1117)
-    public static let foreground = dynamic(0x1f2328, 0xe6edf3)
-    public static let sidebar = dynamic(0xf6f8fa, 0x010409)
-    public static let primary = dynamic(0x0053fd, 0x4a84fe)
-    public static let muted = dynamic(0x656d76, 0x7d8590)
-    public static let border = dynamic(0xd0d7de, 0x30363d)
-    public static let userBubble = dynamic(0xdae7fd, 0x07162c)
-    public static let destructive = dynamic(0xcf222e, 0xf85149)
-    public static let success = dynamic(0x1f8a65, 0x55a583)
+    nonisolated(unsafe) static var palette = Palette.nous
+
+    public static var background: Color { color(\.background) }
+    public static var foreground: Color { color(\.foreground) }
+    public static var sidebar: Color { color(\.sidebar) }
+    public static var primary: Color { color(\.primary) }
+    public static var muted: Color { color(\.muted) }
+    public static var border: Color { color(\.border) }
+    public static var userBubble: Color { color(\.userBubble) }
+    public static var destructive: Color { color(\.destructive) }
+    public static var success: Color { color(\.success) }
+    public static var onPrimary: Color { color(\.onPrimary) }
 
     public static let mono = Font.system(size: 12, design: .monospaced)
     public static let monoSmall = Font.system(size: 11, design: .monospaced)
-    /// Desktop radii are near square (radius scalar 0.2).
-    public static let radius: CGFloat = 6
+    public static var radius: CGFloat { palette.radius }
+
+    static func color(_ slot: KeyPath<Slots, UInt32>) -> Color {
+        let dark = palette.dark[keyPath: slot]
+        let light = palette.light?[keyPath: slot] ?? dark
+        return dynamic(light, dark)
+    }
 
     static func dynamic(_ light: UInt32, _ dark: UInt32) -> Color {
         #if canImport(UIKit)
@@ -35,4 +90,33 @@ public enum Theme {
         NSColor(red: CGFloat(hex >> 16 & 0xff) / 255, green: CGFloat(hex >> 8 & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
     #endif
+}
+
+/// The user's light/dark choice; dark-only palettes ignore it.
+public enum Appearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    public var id: String { rawValue }
+    var scheme: ColorScheme? { self == .light ? .light : self == .dark ? .dark : nil }
+}
+
+extension View {
+    /// Applies the palette's colors, scheme and font treatment to a whole screen.
+    func themed(_ palette: Palette, _ appearance: Appearance) -> some View {
+        #if canImport(UIKit)
+        // Navigation titles ignore SwiftUI's foregroundStyle, so style the bar itself.
+        let title = UIColor(Theme.foreground)
+        UINavigationBar.appearance().largeTitleTextAttributes = [.foregroundColor: title]
+        UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: title]
+        #endif
+        return self
+            .preferredColorScheme(palette.light == nil ? .dark : appearance.scheme)
+            .fontDesign(palette.monospaced ? .monospaced : nil)
+            .foregroundStyle(Theme.foreground)
+            .tint(Theme.primary)
+    }
+
+    /// Lists and forms paint the palette instead of the system grouped background.
+    func themedList() -> some View {
+        self.scrollContentBackground(.hidden).background(Theme.background)
+    }
 }

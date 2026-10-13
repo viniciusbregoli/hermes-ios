@@ -3,6 +3,9 @@ import HermesKit
 
 public struct RootView: View {
     @State private var store: ChatStore
+    @State private var showSettings = false
+    @AppStorage("theme") private var themeId = Palette.nous.id
+    @AppStorage("appearance") private var appearance = Appearance.system
     @Environment(\.scenePhase) private var scenePhase
 
     public init() {
@@ -10,14 +13,22 @@ public struct RootView: View {
     }
 
     public var body: some View {
+        let palette = Palette.named(themeId)
+        let _ = (Theme.palette = palette)
         Group {
             if store.gateway.status == .signedOut {
                 LoginView(gateway: store.gateway)
             } else {
-                MainView(store: store)
+                MainView(store: store, showSettings: $showSettings)
             }
         }
-        .tint(Theme.primary)
+        // Views read Theme statically, so a new id rebuilds them with the new palette.
+        .id(themeId)
+        .themed(palette, appearance)
+        .sheet(isPresented: $showSettings) {
+            SettingsView(gateway: store.gateway, themeId: $themeId, appearance: $appearance)
+                .id(themeId).themed(palette, appearance)
+        }
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active { store.gateway.start() }
         }
@@ -47,6 +58,7 @@ struct LoginView: View {
                 } footer: {
                     Text("The URL of `hermes dashboard` or `hermes serve` with password auth enabled.")
                 }
+                .listRowBackground(Theme.sidebar)
                 if let error {
                     Text(error).foregroundStyle(Theme.destructive)
                 }
@@ -60,7 +72,9 @@ struct LoginView: View {
                 }
                 .disabled(busy || serverURL.isEmpty || username.isEmpty || password.isEmpty)
                 .keyboardShortcut(.defaultAction)
+                .listRowBackground(Theme.sidebar)
             }
+            .themedList()
             .navigationTitle("Hermes")
         }
     }
@@ -85,8 +99,8 @@ struct LoginView: View {
 
 struct MainView: View {
     @Bindable var store: ChatStore
+    @Binding var showSettings: Bool
     @State private var selection: String?
-    @State private var showSettings = false
 
     static let newChat = "__new__"
 
@@ -95,6 +109,7 @@ struct MainView: View {
             List(selection: $selection) {
                 ForEach(store.sessions) { s in
                     SessionRowView(session: s).tag(s.id)
+                        .listRowBackground(Theme.sidebar)
                         .swipeActions {
                             Button("Delete", role: .destructive) { Task { await store.delete(s.id) } }
                         }
@@ -105,6 +120,7 @@ struct MainView: View {
                     ContentUnavailableView("No chats yet", systemImage: "bubble.left.and.text.bubble.right")
                 }
             }
+            .themedList()
             .refreshable { await store.refreshSessions() }
             .navigationTitle("Hermes")
             .toolbar {
@@ -132,7 +148,6 @@ struct MainView: View {
             if stored != nil, stored == store.selectedId, store.runtimeId != nil { return }
             Task { await store.open(stored) }
         }
-        .sheet(isPresented: $showSettings) { SettingsView(gateway: store.gateway) }
         .alert("Hermes", isPresented: Binding(get: { store.alert != nil }, set: { if !$0 { store.alert = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -185,28 +200,56 @@ struct ConnectionBanner: View {
             .foregroundStyle(Theme.muted)
             .padding(8)
             .frame(maxWidth: .infinity)
-            .background(.bar)
+            .background(Theme.sidebar)
         }
     }
 }
 
 struct SettingsView: View {
     let gateway: Gateway
+    @Binding var themeId: String
+    @Binding var appearance: Appearance
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Theme") {
+                    ForEach(Palette.all) { p in
+                        Button { themeId = p.id } label: {
+                            HStack(spacing: 12) {
+                                Swatch(palette: p)
+                                Text(p.name).foregroundStyle(Theme.foreground)
+                                if p.light == nil {
+                                    Text("dark only").font(.caption2).foregroundStyle(Theme.muted)
+                                }
+                                Spacer()
+                                if p.id == themeId { Image(systemName: "checkmark").foregroundStyle(Theme.primary) }
+                            }
+                        }
+                    }
+                    Picker("Appearance", selection: $appearance) {
+                        ForEach(Appearance.allCases) { Text($0.rawValue.capitalized).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(Palette.named(themeId).light == nil)
+                }
+                .listRowBackground(Theme.sidebar)
                 Section("Gateway") {
                     LabeledContent("Server", value: gateway.credentials?.baseURL.absoluteString ?? "")
                     LabeledContent("User", value: gateway.credentials?.username ?? "")
                     LabeledContent("Status", value: "\(gateway.status)")
                 }
-                Button("Sign out", role: .destructive) {
+                .listRowBackground(Theme.sidebar)
+                Button(role: .destructive) {
                     gateway.signOut()
                     dismiss()
+                } label: {
+                    Text("Sign out").foregroundStyle(Theme.destructive)
                 }
+                .listRowBackground(Theme.sidebar)
             }
+            .themedList()
             .navigationTitle("Settings")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -214,6 +257,24 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+}
+
+/// Background, accent and user-bubble colors of a palette, shown in its own scheme.
+struct Swatch: View {
+    let palette: Palette
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let slots = (scheme == .dark || palette.light == nil) ? palette.dark : palette.light!
+        HStack(spacing: 0) {
+            ForEach(Array([slots.background, slots.primary, slots.userBubble, slots.foreground].enumerated()), id: \.offset) { _, hex in
+                Rectangle().fill(Theme.dynamic(hex, hex))
+            }
+        }
+        .frame(width: 56, height: 22)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border, lineWidth: 0.5))
     }
 }
 

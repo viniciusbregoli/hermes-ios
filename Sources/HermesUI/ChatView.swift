@@ -52,7 +52,7 @@ struct ChatView: View {
                     Task { await store.interrupt() }
                 }
             }
-            .background(.bar)
+            .background(Theme.background)
         }
         .navigationTitle(store.title)
         #if os(iOS)
@@ -284,7 +284,7 @@ struct Composer: View {
                 .help("Stop (⌘.)")
             } else {
                 Button(action: send) {
-                    Image(systemName: "arrow.up").frame(width: 34, height: 34)
+                    Image(systemName: "arrow.up").frame(width: 34, height: 34).foregroundStyle(Theme.onPrimary)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canSend)
@@ -331,7 +331,7 @@ struct RequestCard: View {
                 .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
             }
             HStack {
-                Button("Run") { answer(["choice": "once"]) }
+                Button { answer(["choice": "once"]) } label: { Text("Run").foregroundStyle(Theme.onPrimary) }
                     .buttonStyle(.borderedProminent)
                 if choices.contains("session") || choices.contains("always") {
                     Menu("More") {
