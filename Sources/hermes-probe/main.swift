@@ -16,13 +16,14 @@ func run() async throws {
 
     let gw = Gateway(credentials: nil)
     gw.credentials = creds
-    let connected = AsyncStream<Void> { cont in gw.onConnected = { cont.yield() } }
+    let (connected, onConnected) = AsyncStream<Void>.makeStream()
     var done: CheckedContinuation<Void, Never>?
     let prompt = "Reply with exactly the word: pong"
     var probeSid = ""
     var titled = false
     var titleWait: CheckedContinuation<Void, Never>?
-    gw.onEvent = { e in
+    // The gateway holds listeners weakly; it outlives this function, so it can own them.
+    gw.listen(gw, event: { e in
         switch e.type {
         case "message.delta": print(e.payload["text"]?.string ?? "", terminator: ""); fflush(stdout)
         case "tool.start": print("\n[tool] \(e.payload["name"]?.string ?? "") \(e.payload["context"]?.string ?? "")")
@@ -36,8 +37,11 @@ func run() async throws {
             titleWait?.resume(); titleWait = nil
         default: print("\n[event] \(e.type)")
         }
-    }
-    gw.onRequest = { r in print("[request] \(r.method), declining"); gw.respond(r, result: ["choice": "deny"]) }
+    }, request: { r in
+        print("[request] \(r.method), declining")
+        gw.respond(r, result: ["choice": "deny"])
+        return true
+    }, connected: { onConnected.yield() })
     gw.start()
     for await _ in connected { break }
     print("websocket ok")

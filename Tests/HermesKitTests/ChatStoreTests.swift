@@ -21,7 +21,7 @@ struct ChatStoreTests {
     }
 
     func emit(_ type: String, _ payload: JSON = nil, session: String = "rt1") {
-        gateway.onEvent(GatewayEvent(type: type, sessionId: session, payload: payload))
+        gateway.dispatch(GatewayEvent(type: type, sessionId: session, payload: payload))
     }
 
     @Test func snapshotMapsTranscript() {
@@ -69,11 +69,36 @@ struct ChatStoreTests {
     }
 
     @Test func approvalQueuedThenWithdrawn() {
-        store.receive(ServerRequest(rpcId: "srq-1", method: "approval",
-                                    params: ["session_id": "rt1", "request_id": "a1", "command": "rm x"]))
-        store.receive(ServerRequest(rpcId: "srq-2", method: "preview.open", params: [:]))
+        gateway.dispatch(ServerRequest(rpcId: "srq-1", method: "approval",
+                                       params: ["session_id": "rt1", "request_id": "a1", "command": "rm x"]))
+        gateway.dispatch(ServerRequest(rpcId: "srq-2", method: "preview.open", params: ["session_id": "rt1"]))
+        gateway.dispatch(ServerRequest(rpcId: "srq-3", method: "approval", params: ["session_id": "other", "request_id": "a3"]))
         #expect(store.requests.map(\.id) == ["a1"])
         emit("approval.cancelled", ["request_id": "a1"])
         #expect(store.requests.isEmpty)
+    }
+}
+
+@MainActor
+struct GatewayRoutingTests {
+    @Test func requestsGoToTheStoreShowingTheirSession() {
+        let gateway = Gateway(credentials: nil)
+        let a = ChatStore(gateway: gateway)
+        let b = ChatStore(gateway: gateway)
+        a.apply(snapshot: ["session_id": "rt-a"])
+        b.apply(snapshot: ["session_id": "rt-b"])
+        gateway.dispatch(ServerRequest(rpcId: "1", method: "approval", params: ["session_id": "rt-b", "request_id": "x"]))
+        #expect(a.requests.isEmpty)
+        #expect(b.requests.map(\.id) == ["x"])
+    }
+
+    @Test func releasedStoresStopListening() {
+        let gateway = Gateway(credentials: nil)
+        var store: ChatStore? = ChatStore(gateway: gateway)
+        store?.apply(snapshot: ["session_id": "rt"])
+        weak let weakStore = store
+        store = nil
+        #expect(weakStore == nil)
+        gateway.dispatch(GatewayEvent(type: "message.start", sessionId: "rt", payload: nil))
     }
 }

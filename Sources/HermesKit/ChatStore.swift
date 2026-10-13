@@ -62,9 +62,9 @@ public final class ChatStore {
 
     public init(gateway: Gateway) {
         self.gateway = gateway
-        gateway.onEvent = { [weak self] in self?.handle($0) }
-        gateway.onRequest = { [weak self] in self?.receive($0) }
-        gateway.onConnected = { [weak self] in self?.reconnected() }
+        gateway.listen(self, event: { [weak self] in self?.handle($0) },
+                       request: { [weak self] in self?.claim($0) ?? false },
+                       connected: { [weak self] in self?.reconnected() })
     }
 
     public var title: String {
@@ -201,6 +201,13 @@ public final class ChatStore {
     public func answer(_ request: ServerRequest, result: JSON) {
         gateway.respond(request, result: result)
         requests.removeAll { $0.id == request.id }
+    }
+
+    /// Takes the requests meant for the chat on screen; other stores get the rest.
+    func claim(_ r: ServerRequest) -> Bool {
+        guard let sid = runtimeId, r.sessionId == sid else { return false }
+        receive(r)
+        return true
     }
 
     func receive(_ r: ServerRequest) {
