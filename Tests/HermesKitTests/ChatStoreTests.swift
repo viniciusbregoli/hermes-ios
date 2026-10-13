@@ -102,3 +102,19 @@ struct GatewayRoutingTests {
         gateway.dispatch(GatewayEvent(type: "message.start", sessionId: "rt", payload: nil))
     }
 }
+
+@MainActor
+struct BotHistoryTests {
+    @Test func agentDeliveriesAndMentionNotesInHistory() {
+        let store = ChatStore(gateway: Gateway(credentials: nil), profile: "bills")
+        let mention = "ask @inbox" + BotStore.mentionNote(for: "ask @inbox", roster: [Bot(name: "inbox")], excluding: "bills")
+        store.apply(snapshot: ["session_id": "rt", "messages": [
+            ["role": "user", "text": "Message from 🤖 Inbox (@inbox): invoice arrived", "row_id": 1],
+            ["role": "user", "text": .string(mention), "row_id": 2],
+            ["role": "assistant", "text": "", "row_id": 3],
+        ]])
+        #expect(store.items.map(\.kind) == [.agent, .user])
+        #expect(store.items[0].agent?.handle == "inbox" && store.items[0].text == "invoice arrived")
+        #expect(store.items[1].text == "ask @inbox")
+    }
+}
