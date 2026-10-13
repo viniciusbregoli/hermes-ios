@@ -33,6 +33,14 @@ func run() async throws {
     for await _ in connected { break }
     print("websocket ok")
 
+    // `hermes-probe call <method> '<json params>'` prints one raw RPC result and exits.
+    if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "call" {
+        let raw = CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : "{}"
+        let params = try JSONDecoder().decode([String: JSON].self, from: Data(raw.utf8))
+        print(try await gw.call(CommandLine.arguments[2], params).pretty)
+        return
+    }
+
     // `hermes-probe delete <stored-id>` removes a leftover session and exits.
     if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "delete" {
         try await ChatStore.deleteSession(CommandLine.arguments[2], via: gw)
