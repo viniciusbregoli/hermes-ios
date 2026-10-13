@@ -27,7 +27,7 @@ struct ChatView: View {
                 .padding(.vertical, 12)
             }
             .defaultScrollAnchor(.bottom)
-            .scrollDismissesKeyboard(.interactively)
+            .scrollDismissesKeyboard(.immediately)
             .overlay {
                 if store.loading { ProgressView() }
                 else if store.items.isEmpty { EmptyChat() }
@@ -155,7 +155,10 @@ struct ToolRow: View {
                     if let args = tool.args, args.object?.isEmpty == false { Block(title: "Input", text: args.pretty) }
                     if let diff = tool.diff, !diff.isEmpty { Block(title: "Diff", text: diff) }
                     if let summary = tool.summary, !summary.isEmpty { Block(title: "Result", text: summary) }
-                    else if let result = tool.result, !result.isNull { Block(title: "Result", text: String(result.pretty.prefix(4000))) }
+                    else if let result = tool.result, !result.isNull {
+                        // Terminal-style results carry raw text in `output`; show it as-is instead of escaped JSON.
+                        Block(title: "Result", text: String((result["output"]?.string ?? result.pretty).prefix(4000)))
+                    }
                 }
             }
         }
@@ -222,8 +225,9 @@ struct MarkdownText: View {
         var buffer: [Substring] = []
         var inCode = false
         func flush() {
-            let s = buffer.joined(separator: "\n")
-            if inCode || !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { out.append((inCode, s)) }
+            let joined = buffer.joined(separator: "\n")
+            let s = inCode ? joined : joined.trimmingCharacters(in: .newlines)
+            if inCode || !s.trimmingCharacters(in: .whitespaces).isEmpty { out.append((inCode, s)) }
             buffer = []
         }
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
