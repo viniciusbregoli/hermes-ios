@@ -53,11 +53,12 @@ public enum JSON: Codable, Hashable, Sendable {
     func data() throws -> Data { try JSONEncoder().encode(self) }
 }
 
-extension JSON: ExpressibleByStringLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
+extension JSON: ExpressibleByStringLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral,
     ExpressibleByDictionaryLiteral, ExpressibleByArrayLiteral, ExpressibleByNilLiteral {
     public init(stringLiteral v: String) { self = .string(v) }
     public init(booleanLiteral v: Bool) { self = .bool(v) }
     public init(integerLiteral v: Int) { self = .number(Double(v)) }
+    public init(floatLiteral v: Double) { self = .number(v) }
     public init(dictionaryLiteral elements: (String, JSON)...) { self = .object(Dictionary(uniqueKeysWithValues: elements)) }
     public init(arrayLiteral elements: JSON...) { self = .array(elements) }
     public init(nilLiteral: ()) { self = .null }
