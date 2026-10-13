@@ -64,6 +64,8 @@ public final class Gateway {
         wanted = true
         guard status == .offline || status == .signedOut, credentials != nil else { return }
         attempt = 0
+        // Claim the connection synchronously so a reconnect timer can't start a second one.
+        status = .connecting
         Task { await connect() }
     }
 
@@ -105,7 +107,14 @@ public final class Gateway {
             do {
                 ticket = try await Auth.wsTicket(creds)
             } catch AuthError.expired {
-                creds = try await Auth.refresh(creds)
+                do {
+                    creds = try await Auth.refresh(creds)
+                } catch AuthError.expired {
+                    // Only a rejected refresh token means the session is over.
+                    credentials = nil
+                    status = .signedOut
+                    return
+                }
                 credentials = creds
                 ticket = try await Auth.wsTicket(creds)
             }
@@ -114,14 +123,12 @@ public final class Gateway {
             comps.queryItems = [.init(name: "ticket", value: ticket)]
             let ws = URLSession.shared.webSocketTask(with: comps.url!)
             ws.maximumMessageSize = 64 << 20
+            socket?.cancel(with: .goingAway, reason: nil)
             socket = ws
             lastInbound = Date()
             ws.resume()
             Task { await receiveLoop(ws) }
             // The handshake finishes when `gateway.ready` arrives (see `handle`).
-        } catch AuthError.expired {
-            credentials = nil
-            status = .signedOut
         } catch {
             lastError = error.localizedDescription
             status = .offline
@@ -210,7 +217,9 @@ public final class Gateway {
         let delay = Double.random(in: 0...cap)
         Task {
             try? await Task.sleep(for: .seconds(delay))
-            if wanted, status == .offline { await connect() }
+            guard wanted, status == .offline else { return }
+            status = .connecting
+            await connect()
         }
     }
 
