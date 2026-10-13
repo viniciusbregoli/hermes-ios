@@ -59,7 +59,7 @@ public final class ChatStore {
     public var botChatTitle: String?
     /// Why the Bot Chat couldn't be opened; the UI offers a retry instead of creating another one.
     public private(set) var botChatError: String?
-    public private(set) var items: [ChatItem] = []
+    public internal(set) var items: [ChatItem] = []
     public private(set) var loading = false
     public private(set) var running = false
     public private(set) var statusText: String?
@@ -69,6 +69,23 @@ public final class ChatStore {
     /// Approvals, clarify questions, sudo/secret prompts waiting for the user.
     public private(set) var requests: [ServerRequest] = []
     public var alert: String?
+
+    // Per-chat controls and live status; folded in ChatStore+Controls.swift.
+    public internal(set) var todos: [TodoItem] = []
+    @ObservationIgnored var todoRevision = -1
+    public internal(set) var usage: Usage?
+    /// Messages the server queued to run after the current turn.
+    public internal(set) var queued: [String] = []
+    /// Short labels under user messages that steered or redirected a running turn, by item id.
+    public internal(set) var notes: [String: String] = [:]
+    /// The user message to resend when the last turn failed with a retryable error.
+    public internal(set) var retryText: String?
+    public internal(set) var reasoningEffort = ""
+    public internal(set) var fast = false
+    /// The model that answered 4002 to fast mode; fast is hidden while it stays selected.
+    public internal(set) var fastUnsupportedModel: String?
+    public internal(set) var yolo = false
+    public internal(set) var approvalMode = ""
 
     @ObservationIgnored private var nextLocalId = 0
 
@@ -113,6 +130,7 @@ public final class ChatStore {
             requests = []
             running = false
             statusText = nil
+            resetControls()
         }
         guard let storedId else { return }
         loading = true
@@ -184,9 +202,13 @@ public final class ChatStore {
         guard !text.isEmpty else { return }
         do {
             let sid = try await ensureSession()
-            items.append(ChatItem(id: localId(), kind: .user, text: text))
+            // A busy session decides where the message goes (queue, steer, redirect), so wait for its answer.
+            let busy = running
+            if !busy { items.append(ChatItem(id: localId(), kind: .user, text: text)) }
             running = true
-            _ = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(text + note)])
+            retryText = nil
+            let r = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(text + note)])
+            if busy { placeSubmitted(text, status: r["status"]?.string) }
         } catch {
             running = false
             items.append(ChatItem(id: localId(), kind: .error, text: error.localizedDescription))
@@ -256,7 +278,7 @@ public final class ChatStore {
 
     /// The live session for the chat on screen: reattaches to the selected chat if its runtime
     /// was lost (failed reconnect), or creates one for a new chat.
-    private func ensureSession() async throws -> String {
+    func ensureSession() async throws -> String {
         if let sid = runtimeId { return sid }
         if let id = selectedId {
             apply(snapshot: try await gateway.call("session.resume", scoped(["session_id": .string(id), "inline_images": false])))
@@ -299,6 +321,7 @@ public final class ChatStore {
 
     private func handle(_ e: GatewayEvent) {
         let p = e.payload
+        if e.sessionId == runtimeId { handleControls(e.type, p) }
         if e.sessionId.isEmpty {
             if e.type == "sessions.changed" { Task { await refreshSessions() } }
             return
@@ -373,8 +396,7 @@ public final class ChatStore {
         }
         closeAssistant()
         if p["status"]?.string == "error" {
-            let msg = p["error"]?.string ?? p["error_surface"]?["code"]?.string ?? "The turn failed."
-            items.append(ChatItem(id: localId(), kind: .error, text: msg))
+            items.append(ChatItem(id: localId(), kind: .error, text: Self.turnErrorText(p)))
         }
         running = false
         statusText = nil
@@ -406,6 +428,7 @@ public final class ChatStore {
         for r in s["open_requests"]?.array ?? [] {
             receive(ServerRequest(rpcId: r["id"] ?? .null, method: r["method"]?.string ?? "", params: r["params"] ?? .null))
         }
+        applySnapshotExtras(s)
     }
 
     private func item(from m: JSON) -> ChatItem? {
@@ -437,6 +460,7 @@ public final class ChatStore {
 
     private func applyInfo(_ info: JSON?) {
         guard let info else { return }
+        applyControlInfo(info)
         if let m = info["model"]?.string, !m.isEmpty { model = m }
         if let p = info["provider"]?.string, !p.isEmpty { provider = p }
         if let r = info["running"]?.bool { running = r }
@@ -473,7 +497,7 @@ public final class ChatStore {
         return params.merging(["profile": .string(profile)]) { a, _ in a }
     }
 
-    private func localId() -> String {
+    func localId() -> String {
         nextLocalId += 1
         return "local-\(nextLocalId)"
     }
