@@ -63,15 +63,18 @@ public enum Auth {
         return try credentials(from: tokens, baseURL: baseURL, username: username, fallbackProvider: provider)
     }
 
+    /// Token calls never follow redirects, so a 3xx can't carry the bearer or refresh token elsewhere.
+    static let noRedirects = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+
     public static func refresh(_ c: Credentials) async throws -> Credentials {
-        let tokens = try await post(.shared, c.baseURL.appending(path: "auth/native/refresh"),
+        let tokens = try await post(noRedirects, c.baseURL.appending(path: "auth/native/refresh"),
                                     ["refresh_token": .string(c.refreshToken), "provider": .string(c.provider)])
         return try credentials(from: tokens, baseURL: c.baseURL, username: c.username, fallbackProvider: c.provider)
     }
 
     /// Single-use, 30 s ticket for the WebSocket upgrade.
     public static func wsTicket(_ c: Credentials) async throws -> String {
-        let r = try await post(.shared, c.baseURL.appending(path: "api/auth/ws-ticket"), [:], bearer: c.accessToken)
+        let r = try await post(noRedirects, c.baseURL.appending(path: "api/auth/ws-ticket"), [:], bearer: c.accessToken)
         guard let t = r["ticket"]?.string else { throw AuthError.server(200, "no ticket") }
         return t
     }
