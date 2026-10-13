@@ -148,6 +148,8 @@ public final class BotStore {
         return bots.filter { $0.name != active && (p.isEmpty || $0.handle.hasPrefix(p) || $0.label.lowercased().hasPrefix(p)) }
     }
 
+    nonisolated static let mentionNoteStart = "\n\n[@mentions resolved from the Bot Mode roster"
+
     public func mentionNote(for text: String, excluding active: String) -> String {
         Self.mentionNote(for: text, roster: bots, excluding: active)
     }
@@ -182,7 +184,7 @@ public final class BotStore {
             "@\(bot.handle) = agent profile \"\(bot.name)\"" + (bot.title.isEmpty ? "" : " (\"\(bot.title)\")")
         }
         // Must match the desktop byte for byte, dashes included.
-        return "\n\n[@mentions resolved from the Bot Mode roster \u{2014} the user is referring to: " + lines.joined(separator: "; ")
+        return mentionNoteStart + " \u{2014} the user is referring to: " + lines.joined(separator: "; ")
             + ". If they want one of these agents contacted, compose your own message and send it with your message_agent tool"
             + " (agents on other connected machines are reachable too \u{2014} the Desktop relays it); never forward the user\u{2019}s"
             + " text verbatim. If this session has no message_agent tool, agent messaging is unavailable here \u{2014} say so.]"

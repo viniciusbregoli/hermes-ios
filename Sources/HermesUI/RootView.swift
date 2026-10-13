@@ -3,13 +3,17 @@ import HermesKit
 
 public struct RootView: View {
     @State private var store: ChatStore
+    @State private var bots: BotStore
+    @State private var tab = 0
     @State private var showSettings = false
     @AppStorage("theme") private var themeId = Palette.nous.id
     @AppStorage("appearance") private var appearance = Appearance.system
     @Environment(\.scenePhase) private var scenePhase
 
     public init() {
-        _store = State(initialValue: ChatStore(gateway: Gateway(credentials: Keychain.load())))
+        let gateway = Gateway(credentials: Keychain.load())
+        _store = State(initialValue: ChatStore(gateway: gateway))
+        _bots = State(initialValue: BotStore(gateway: gateway))
     }
 
     public var body: some View {
@@ -19,7 +23,18 @@ public struct RootView: View {
             if store.gateway.status == .signedOut {
                 LoginView(gateway: store.gateway)
             } else {
-                MainView(store: store, showSettings: $showSettings)
+                TabView(selection: $tab) {
+                    MainView(store: store, bots: bots, showSettings: $showSettings)
+                        .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
+                        .tag(0)
+                    BotsView(bots: bots, showSettings: $showSettings)
+                        .tabItem { Label("Bots", systemImage: "person.2") }
+                        .tag(1)
+                }
+                .background {
+                    Button("Chats") { tab = 0 }.keyboardShortcut("1", modifiers: .command).hidden()
+                    Button("Bots") { tab = 1 }.keyboardShortcut("2", modifiers: .command).hidden()
+                }
             }
         }
         // Views read Theme statically, so a new id rebuilds them with the new palette.
@@ -99,6 +114,7 @@ struct LoginView: View {
 
 struct MainView: View {
     @Bindable var store: ChatStore
+    let bots: BotStore
     @Binding var showSettings: Bool
     @State private var selection: String?
 
@@ -137,7 +153,7 @@ struct MainView: View {
             .safeAreaInset(edge: .bottom) { ConnectionBanner(gateway: store.gateway) }
         } detail: {
             if selection != nil {
-                ChatView(store: store)
+                ChatView(store: store, bots: bots)
             } else {
                 ContentUnavailableView("Pick a chat", systemImage: "bubble.left")
             }

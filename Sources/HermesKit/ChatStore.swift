@@ -22,13 +22,15 @@ public struct ToolCall: Hashable, Sendable {
 }
 
 public struct ChatItem: Identifiable, Hashable, Sendable {
-    public enum Kind: Sendable { case user, assistant, tool, error }
+    /// `agent` is a message another bot delivered into this chat.
+    public enum Kind: Sendable { case user, agent, assistant, tool, error }
     public let id: String
     public var kind: Kind
     public var text = ""
     public var reasoning = ""
     public var streaming = false
     public var tool: ToolCall?
+    public var agent: AgentMessage?
 }
 
 public struct ModelProvider: Identifiable, Hashable, Sendable {
@@ -411,7 +413,12 @@ public final class ChatStore {
         let text = m["text"]?.string ?? m["content"]?.string ?? ""
         switch m["role"]?.string {
         case "user":
-            return ChatItem(id: "row-\(rowId)", kind: .user, text: text)
+            if let agent = AgentMessage.parse(text) {
+                return ChatItem(id: "row-\(rowId)", kind: .agent, text: agent.body, agent: agent)
+            }
+            // The @mention note is for the agent; the user only typed what precedes it.
+            let shown = text.range(of: BotStore.mentionNoteStart).map { String(text[..<$0.lowerBound]) } ?? text
+            return ChatItem(id: "row-\(rowId)", kind: .user, text: shown)
         case "assistant":
             let reasoning = m["reasoning"]?.string ?? ""
             guard !text.isEmpty || !reasoning.isEmpty else { return nil }
