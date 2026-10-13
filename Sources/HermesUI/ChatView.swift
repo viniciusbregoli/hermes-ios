@@ -333,7 +333,6 @@ struct RequestCard: View {
             HStack {
                 Button("Run") { answer(["choice": "once"]) }
                     .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
                 if choices.contains("session") || choices.contains("always") {
                     Menu("More") {
                         if choices.contains("session") { Button("Allow for this session") { answer(["choice": "session"]) } }
