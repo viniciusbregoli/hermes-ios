@@ -1,5 +1,6 @@
 import Foundation
 import HermesKit
+import UniformTypeIdentifiers
 
 // Live check against a real gateway:
 //   HERMES_URL=https://host:port HERMES_USER=... HERMES_PASSWORD=... swift run hermes-probe
@@ -58,6 +59,33 @@ func run() async throws {
     if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "delete" {
         try await ChatStore.deleteSession(CommandLine.arguments[2], via: gw)
         print("deleted \(CommandLine.arguments[2])")
+        return
+    }
+
+    // `hermes-probe attach <file> "<prompt>"` sends the prompt with that file through ChatStore,
+    // reloads the chat, fetches its images back, then deletes the session.
+    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "attach" {
+        let url = URL(fileURLWithPath: CommandLine.arguments[2])
+        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        let store = ChatStore(gateway: gw)
+        store.attach(Attachment(name: url.lastPathComponent, mime: mime, data: try Data(contentsOf: url)))
+        while store.attachments.contains(where: { $0.state == .uploading }) { try await Task.sleep(for: .milliseconds(100)) }
+        print("attachment: \(store.attachments.map(\.state))")
+        let stored = store.selectedId ?? ""
+        await store.send(CommandLine.arguments[3])
+        await withCheckedContinuation { done = $0 }
+        await store.open(nil)
+        // A second store resumes from scratch, the way reopening the chat in the app does.
+        let reload = ChatStore(gateway: gw)
+        await reload.open(stored)
+        for item in reload.items where item.kind == .user {
+            print("reloaded user row: text=\(item.text.debugDescription) files=\(item.files) images=\(item.images)")
+            for case .path(let p) in item.images { print("  fetched \(p): \(try await gw.download(path: p).count) bytes") }
+        }
+        await reload.open(nil)
+        try await Task.sleep(for: .seconds(3))
+        if !stored.isEmpty { try await ChatStore.deleteSession(stored, via: gw) }
+        print("deleted \(stored)")
         return
     }
 
