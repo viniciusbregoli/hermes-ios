@@ -85,12 +85,16 @@ public final class ChatStore {
     }
 
     public func open(_ storedId: String?) async {
-        await detach()
-        selectedId = storedId
-        items = []
-        requests = []
-        running = false
-        statusText = nil
+        // Re-opening the same chat (after a reconnect) keeps what's on screen until the resume lands,
+        // so a failed resume doesn't blank the transcript.
+        if storedId == nil || storedId != selectedId {
+            await detach()
+            selectedId = storedId
+            items = []
+            requests = []
+            running = false
+            statusText = nil
+        }
         guard let storedId else { return }
         loading = true
         defer { loading = false }
@@ -107,13 +111,7 @@ public final class ChatStore {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         do {
-            if runtimeId == nil {
-                let created = try await gateway.call("session.create")
-                runtimeId = created["session_id"]?.string
-                selectedId = created["stored_session_id"]?.string
-                applyInfo(created["info"])
-            }
-            guard let sid = runtimeId else { return }
+            let sid = try await ensureSession()
             items.append(ChatItem(id: localId(), kind: .user, text: text))
             running = true
             _ = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(text)])
@@ -167,12 +165,7 @@ public final class ChatStore {
     /// call again with `confirmed: true` to proceed.
     public func setModel(_ model: String, provider: String, confirmed: Bool = false) async -> String? {
         do {
-            if runtimeId == nil {
-                let created = try await gateway.call("session.create")
-                runtimeId = created["session_id"]?.string
-                selectedId = nil
-            }
-            guard let sid = runtimeId else { return nil }
+            let sid = try await ensureSession()
             var params: [String: JSON] = ["session_id": .string(sid), "key": "model",
                                           "value": .string("\(model) --provider \(provider) --session")]
             if confirmed { params["confirm_expensive_model"] = true }
@@ -185,6 +178,22 @@ public final class ChatStore {
             alert = error.localizedDescription
         }
         return nil
+    }
+
+    /// The live session for the chat on screen: reattaches to the selected chat if its runtime
+    /// was lost (failed reconnect), or creates one for a new chat.
+    private func ensureSession() async throws -> String {
+        if let sid = runtimeId { return sid }
+        if let id = selectedId {
+            apply(snapshot: try await gateway.call("session.resume", ["session_id": .string(id), "inline_images": false]))
+        } else {
+            let created = try await gateway.call("session.create")
+            runtimeId = created["session_id"]?.string
+            selectedId = created["stored_session_id"]?.string
+            applyInfo(created["info"])
+        }
+        guard let sid = runtimeId else { throw GatewayError.offline }
+        return sid
     }
 
     // MARK: - Server requests
