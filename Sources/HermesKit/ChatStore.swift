@@ -223,8 +223,14 @@ public final class ChatStore {
             statusText = nil
         case "message.delta":
             appendAssistant(text: p["text"]?.string ?? "")
-        case "reasoning.delta", "thinking.delta":
+        case "reasoning.delta":
             appendAssistant(reasoning: p["text"]?.string ?? "")
+        case "reasoning.available":
+            // A whole block from a non-streaming provider; skip it if the deltas already arrived.
+            if !(items.last.map { $0.kind == .assistant && $0.streaming && !$0.reasoning.isEmpty } ?? false) {
+                appendAssistant(reasoning: p["text"]?.string ?? "")
+            }
+        // thinking.delta is the TUI's legacy spinner text ("( •_•)>⌐■-■ brainstorming..."); the desktop drops it too.
         case "message.interim":
             if p["already_streamed"]?.bool != true { appendAssistant(text: p["text"]?.string ?? "") }
             closeAssistant()

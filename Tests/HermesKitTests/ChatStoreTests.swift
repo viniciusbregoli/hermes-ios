@@ -34,6 +34,7 @@ struct ChatStoreTests {
     @Test func streamedTurnInterleavesTextAndTools() {
         emit("message.start")
         emit("reasoning.delta", ["text": "plan"])
+        emit("thinking.delta", ["text": "( •_•)>⌐■-■ brainstorming..."])
         emit("message.delta", ["text": "Run"])
         emit("message.delta", ["text": "ning"])
         emit("tool.start", ["tool_id": "c1", "name": "terminal", "context": "make"])
