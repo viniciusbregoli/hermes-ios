@@ -116,7 +116,7 @@ struct MainView: View {
                 }
             }
             .overlay {
-                if store.sessions.isEmpty, store.gateway.status == .online {
+                if store.sessions.isEmpty, store.sessionsLoaded {
                     ContentUnavailableView("No chats yet", systemImage: "bubble.left.and.text.bubble.right")
                 }
             }
