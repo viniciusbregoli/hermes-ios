@@ -18,6 +18,10 @@ func run() async throws {
     gw.credentials = creds
     let connected = AsyncStream<Void> { cont in gw.onConnected = { cont.yield() } }
     var done: CheckedContinuation<Void, Never>?
+    let prompt = "Reply with exactly the word: pong"
+    var probeSid = ""
+    var titled = false
+    var titleWait: CheckedContinuation<Void, Never>?
     gw.onEvent = { e in
         switch e.type {
         case "message.delta": print(e.payload["text"]?.string ?? "", terminator: ""); fflush(stdout)
@@ -25,6 +29,11 @@ func run() async throws {
         case "message.complete":
             print("\n[complete] status=\(e.payload["status"]?.string ?? "?")")
             done?.resume(); done = nil
+        // The first title is just the prompt; the generated one follows from the background titler.
+        case "session.title" where e.sessionId == probeSid && e.payload["title"]?.string != prompt:
+            print("[title] \(e.payload["title"]?.string ?? "")")
+            titled = true
+            titleWait?.resume(); titleWait = nil
         default: print("\n[event] \(e.type)")
         }
     }
@@ -55,11 +64,20 @@ func run() async throws {
 
     let created = try await gw.call("session.create", ["title": "hermes-mobile probe"])
     let sid = created["session_id"]?.string ?? ""
+    probeSid = sid
     let stored = created["stored_session_id"]?.string ?? ""
     print("session \(sid) / \(stored)")
-    let submit = try await gw.call("prompt.submit", ["session_id": .string(sid), "text": "Reply with exactly the word: pong"])
+    let submit = try await gw.call("prompt.submit", ["session_id": .string(sid), "text": .string(prompt)])
     print("submit: \(submit["status"]?.string ?? "?")")
     await withCheckedContinuation { done = $0 }
+
+    // The titler writes the row even after a delete, which would leave the session behind.
+    if !titled {
+        await withCheckedContinuation { cont in
+            titleWait = cont
+            Task { try? await Task.sleep(for: .seconds(10)); titleWait?.resume(); titleWait = nil }
+        }
+    }
 
     _ = try? await gw.call("session.close", ["session_id": .string(sid)])
     if !stored.isEmpty { try await ChatStore.deleteSession(stored, via: gw) }
