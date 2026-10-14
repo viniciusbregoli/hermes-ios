@@ -54,3 +54,19 @@ struct AttachmentTests {
         #expect(store.items.first?.files == ["a.pdf"])
     }
 }
+
+@MainActor
+struct QueuedAttachmentTests {
+    @Test func queuedMessagesKeepTheirAttachments() {
+        let gateway = Gateway(credentials: nil)
+        let store = ChatStore(gateway: gateway)
+        store.apply(snapshot: ["session_id": "rt1", "running": true, "messages": [],
+                               "queued": ["user": "Look\n@image:/srv/q.png"]])
+        #expect(store.queued.first?.text == "Look" && store.queued.first?.images == [.path("/srv/q.png")])
+
+        store.placeSubmitted(ChatItem(id: "q2", kind: .user, images: [.data(Data([1]))]), status: "queued")
+        gateway.dispatch(GatewayEvent(type: "message.start", sessionId: "rt1", payload: nil))
+        #expect(store.items.last?.images == [.path("/srv/q.png")])
+        #expect(store.queued.map(\.id) == ["q2"])
+    }
+}
