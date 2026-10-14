@@ -137,6 +137,37 @@ struct ActivityTests {
         #expect(BackgroundProcess.parse(rows, session: "rt-1", now: Date()).first?.outputTail == "red plain")
     }
 
+    @Test func stripEscapesCleansRealPtyOutput() {
+        let strip = BackgroundProcess.stripEscapes
+        // Colors, bold and reset.
+        #expect(strip("\u{1B}[1;32mok\u{1B}[0m \u{1B}[38;5;208mwarn\u{1B}[39m") == "ok warn")
+        // Bracketed paste and the keyboard protocols a fish prompt turns on and off, with private markers and intermediates.
+        #expect(strip("\u{1B}[?2004h$ ls\u{1B}[?2004l\u{1B}[>4;1m\u{1B}[=5u\u{1B}[>4;1m\u{1B}[=0u\u{1B}[0 q") == "$ ls")
+        // OSC: window title and cwd (BEL or ST terminated) and fish's prompt marks.
+        #expect(strip("\u{1B}]0;/t/hermes-qa\u{07}\u{1B}]7;file://host/tmp/hermes-qa\u{1B}\\\u{1B}]133;A;special_key=1\u{07}prompt") == "prompt")
+        // Charset selection, keypad mode and a cursor save.
+        #expect(strip("\u{1B}(B\u{1B}=\u{1B}>\u{1B}7text\u{1B}8") == "text")
+        // A cut-off OSC ends the text; control characters go except newline and tab; CRLF becomes LF.
+        #expect(strip("a\u{1B}]7;file://host/tm") == "a")
+        #expect(strip("one\r\ntwo\tx\u{08}\u{07}\u{00}y\u{7F}") == "one\ntwo\txy")
+        // Powerline glyphs have no font here.
+        #expect(strip("\u{E0B0}~/src\u{E0B1} $") == "~/src $")
+        #expect(strip("\u{F08DA} ~ \u{E73C} v3.13.5 \u{276F}") == " ~  v3.13.5 \u{276F}")
+        #expect(strip("plain text, \u{00E9}\u{1F600}") == "plain text, \u{00E9}\u{1F600}")
+    }
+
+    @Test func aKilledProcessIsStoppedNotFailed() {
+        let rows: JSON = [
+            ["session_id": "k1", "status": "exited", "exit_code": -15, "exited_at": 1],
+            ["session_id": "k2", "status": "exited", "exit_code": 1, "completion_reason": "killed", "exited_at": 1],
+            ["session_id": "f", "status": "exited", "exit_code": 2, "exited_at": 1],
+            ["session_id": "ok", "status": "exited", "exit_code": 0, "exited_at": 1],
+            ["session_id": "r", "status": "running"],
+        ]
+        let outcomes = BackgroundProcess.parse(rows, session: "rt", now: Date()).map(\.outcome)
+        #expect(outcomes == [.stopped, .stopped, .failed, .exited, .running])
+    }
+
     @Test func aFailingSessionDoesNotDropTheOthers() async {
         let lists = await BackgroundProcess.fetch(["rt-1", "rt-2", "rt-3"], limit: 2) { sid in
             if sid == "rt-2" { throw GatewayError.offline }
