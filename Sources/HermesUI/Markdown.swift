@@ -141,6 +141,7 @@ struct CodeBlock: View {
     let code: String
     let language: String?
     @State private var copied = false
+    @State private var resetCopied: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -150,7 +151,11 @@ struct CodeBlock: View {
                 Button {
                     Clipboard.copy(code)
                     copied = true
-                    Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+                    resetCopied?.cancel()
+                    resetCopied = Task {
+                        do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
+                        copied = false
+                    }
                 } label: {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc").font(.caption)
                 }
