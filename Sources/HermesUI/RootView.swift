@@ -12,8 +12,15 @@ public struct RootView: View {
 
     public init() {
         let gateway = Gateway(credentials: Keychain.load())
-        _store = State(initialValue: ChatStore(gateway: gateway))
-        _bots = State(initialValue: BotStore(gateway: gateway))
+        let store = ChatStore(gateway: gateway)
+        let bots = BotStore(gateway: gateway)
+        #if os(iOS)
+        let notifier = Notifier.shared
+        store.onTurnFinished = { title, reply in notifier.post(title: title, body: reply) }
+        bots.onTurnFinished = { [weak bots] name, reply in notifier.post(title: bots?.bot(named: name)?.label ?? name, body: reply) }
+        #endif
+        _store = State(initialValue: store)
+        _bots = State(initialValue: bots)
     }
 
     public var body: some View {
@@ -124,7 +131,7 @@ struct MainView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 ForEach(store.sessions) { s in
-                    SessionRowView(session: s).tag(s.id)
+                    SessionRowView(session: s, unread: store.unread.contains(s.id)).tag(s.id)
                         .listRowBackground(Theme.sidebar)
                         .swipeActions {
                             Button("Delete", role: .destructive) { Task { await store.delete(s.id) } }
@@ -158,6 +165,8 @@ struct MainView: View {
                 ContentUnavailableView("Pick a chat", systemImage: "bubble.left")
             }
         }
+        // The split view's detail appears and disappears unreliably, so the selection says what is on screen.
+        .onChange(of: selection, initial: true) { store.onScreen = selection != nil }
         .onChange(of: selection) { _, id in
             guard let id else { return }
             let stored = id == Self.newChat ? nil : id
@@ -179,10 +188,12 @@ struct MainView: View {
 
 struct SessionRowView: View {
     let session: SessionRow
+    var unread = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline) {
+                if unread { UnreadDot() }
                 Text(session.title.nonEmpty ?? "Untitled")
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
@@ -199,6 +210,13 @@ struct SessionRowView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// A finished turn the user hasn't looked at yet.
+struct UnreadDot: View {
+    var body: some View {
+        Circle().fill(Theme.primary).frame(width: 8, height: 8).accessibilityLabel("Unread")
     }
 }
 

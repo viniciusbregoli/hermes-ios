@@ -58,6 +58,7 @@ struct BotRow: View {
             BotAvatar(bot: bot, bots: bots, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
+                    if bots.unread.contains(bot.name) { UnreadDot() }
                     Text(bot.label).font(.subheadline.weight(.medium)).lineLimit(1)
                     BotActivity(bot: bot, bots: bots)
                     Spacer()
@@ -183,6 +184,14 @@ struct BotChatScreen: View {
             }
             .onChange(of: store.runtimeId, initial: true) { bots.track(runtime: store.runtimeId, bot: name, running: store.running) }
             .onChange(of: store.running) { bots.track(runtime: store.runtimeId, bot: name, running: store.running) }
+            .onChange(of: store.visible, initial: true) {
+                if store.visible { bots.visibleBot = name } else if bots.visibleBot == name { bots.visibleBot = nil }
+            }
+            .onAppear { store.onScreen = true }
+            .onDisappear {
+                store.onScreen = false
+                if bots.visibleBot == name { bots.visibleBot = nil }
+            }
     }
 
     private func open() async {

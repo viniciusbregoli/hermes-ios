@@ -180,7 +180,7 @@ struct TurnTrackingTests {
         #expect(store.turnEnds["row-1"]?.stopped == true)
         #expect(store.turnStartedAt == nil && store.finishedTurns == 1)
         #expect(store.unread == ["s1"] && finished == ["yo"])
-        store.visible = true
+        store.onScreen = true
         #expect(store.unread.isEmpty)
     }
 }

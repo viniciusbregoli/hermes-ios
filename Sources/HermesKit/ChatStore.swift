@@ -89,10 +89,10 @@ public final class ChatStore {
     public internal(set) var turnEnds: [String: TurnEnd] = [:]
     /// Counts turns that finished without an error, so the open chat can answer with a haptic.
     public internal(set) var finishedTurns = 0
-    /// The chat is on screen and the app is active; set by the chat view.
-    public var visible = false {
-        didSet { if visible, let id = selectedId { unread.remove(id) } }
-    }
+    /// The chat is the screen being shown; set by the navigation that owns it.
+    public var onScreen = false { didSet { markRead() } }
+    public var appActive = true { didSet { markRead() } }
+    public var visible: Bool { onScreen && appActive }
     /// Chats whose turn finished while they were off screen.
     // ponytail: in memory only, so dots clear on relaunch; persist the set if that matters.
     public internal(set) var unread: Set<String> = []
@@ -133,6 +133,10 @@ public final class ChatStore {
     }
 
     // MARK: - Actions
+
+    private func markRead() {
+        if visible, let id = selectedId { unread.remove(id) }
+    }
 
     public func refreshSessions() async {
         guard let r = try? await gateway.call("session.list", scoped(["limit": 200])) else { return }
