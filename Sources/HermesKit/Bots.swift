@@ -43,7 +43,7 @@ public struct Bot: Identifiable, Hashable, Sendable {
         hasAvatar = row["has_avatar"]?.bool ?? false
         let canonical = row["canonical_session"], last = row["last_session"]
         canonicalId = canonical?["resolved_id"]?.string?.nonEmpty ?? canonical?["id"]?.string?.nonEmpty
-        preview = canonical?["preview"]?.string?.nonEmpty ?? last?["preview"]?.string ?? ""
+        preview = Preview.clean(canonical?["preview"]?.string?.nonEmpty ?? last?["preview"]?.string ?? "")
         lastActive = [canonical?["last_active"]?.double, last?["last_active"]?.double].compactMap { $0 }.max()
             .map(Date.init(timeIntervalSince1970:))
         workerActive = row["worker_session"]?["last_active"]?.double.map(Date.init(timeIntervalSince1970:))

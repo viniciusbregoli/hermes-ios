@@ -7,6 +7,11 @@ public struct SessionRow: Identifiable, Hashable, Sendable {
     public var preview: String
     public var startedAt: Date
     public var messageCount: Int
+    /// When the chat last changed. `session.list` doesn't send it, so it comes from the REST list and from turns seen here.
+    public var lastActive: Date?
+
+    /// What the row's time shows: the last activity, or the start while that isn't known.
+    public var activity: Date { max(lastActive ?? startedAt, startedAt) }
 }
 
 public struct ToolCall: Hashable, Sendable {
@@ -113,6 +118,12 @@ public final class ChatStore {
     public internal(set) var unread: [String: Date] = [:] {
         didSet { if profile == nil, unread != oldValue { defaults.set(unread, forKey: Self.unreadKey) } }
     }
+    /// What the gateway says about each live session, by stored id; the Activity poll fills it, so the list shows
+    /// which chats are working or waiting without polling itself.
+    public internal(set) var live: [String: ChatLive] = [:]
+    /// The last reply seen per chat, by stored id. `session.list` only has the first prompt, so a row shows this
+    /// once the chat has been seen live (a gateway session lists its latest message while it is open) or finished here.
+    public internal(set) var replies: [String: String] = [:]
     /// Called when a turn finishes while the chat is off screen, with the chat title and the reply.
     @ObservationIgnored public var onTurnFinished: ((_ title: String, _ reply: String) -> Void)?
 
@@ -160,6 +171,8 @@ public final class ChatStore {
     /// Where a turn this app didn't send begins in `items`, until the row that opened it is shown.
     @ObservationIgnored var openerAt: Int?
 
+    /// When a turn ended while its chat was on screen, so a later Activity poll doesn't mark it unread.
+    @ObservationIgnored var watchedEnds: [String: Date] = [:]
     @ObservationIgnored private var nextLocalId = 0
     @ObservationIgnored private let defaults: UserDefaults
     static let unreadKey = "chats.unread"
@@ -196,7 +209,12 @@ public final class ChatStore {
 
     func applySessions(_ r: JSON) {
         sessionsLoaded = true
-        sessions = SessionRow.parse(r["sessions"]).filter { !deleting.contains($0.id) }
+        let known = Dictionary(sessions.compactMap { row in row.lastActive.map { (row.id, $0) } }) { a, _ in a }
+        sessions = SessionRow.parse(r["sessions"]).filter { !deleting.contains($0.id) }.map { row in
+            var row = row
+            row.lastActive = row.lastActive ?? known[row.id]
+            return row
+        }
         let listed = Set(sessions.map(\.id))
         unread = unread.filter { listed.contains($0.key) }
     }
@@ -594,7 +612,12 @@ public final class ChatStore {
         running = false
         statusText = nil
         turnStartedAt = nil
+        if let id = selectedId, let i = sessions.firstIndex(where: { $0.id == id }) {
+            sessions[i].lastActive = Date()
+            if let reply = items.last(where: { $0.kind == .assistant })?.text, let line = Preview.clean(reply).nonEmpty { replies[id] = line }
+        }
         if status != "error" { finishedTurns += 1 }
+        if visible, let id = selectedId { watchedEnds[id] = Date() }
         if !visible {
             if let id = selectedId, profile == nil { unread[id] = Date() }
             let reply = items.last { $0.kind == .assistant }?.text ?? ""
