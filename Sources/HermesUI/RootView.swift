@@ -348,6 +348,7 @@ struct SettingsView: View {
     @AppStorage(ChatTextSize.key) private var textSize = ChatTextSize.standard
     @AppStorage("showTouches") private var showTouches = false
     @Environment(\.dismiss) private var dismiss
+    @State private var confirmSignOut = false
 
     var body: some View {
         NavigationStack {
@@ -415,14 +416,23 @@ struct SettingsView: View {
                 }
                 .listRowBackground(Theme.sidebar)
                 Button(role: .destructive) {
-                    gateway.signOut()
-                    dismiss()
+                    confirmSignOut = true
                 } label: {
                     Text("Sign out").foregroundStyle(Theme.destructive)
                 }
                 .listRowBackground(Theme.sidebar)
             }
             .themedList()
+            // An alert rather than a confirmationDialog: on the Form that one is a popover with no Cancel button.
+            .alert("Sign out of \(gateway.credentials?.username ?? "Hermes")?", isPresented: $confirmSignOut) {
+                Button("Cancel", role: .cancel) {}
+                Button("Sign out", role: .destructive) {
+                    gateway.signOut()
+                    dismiss()
+                }
+            } message: {
+                Text("You will need the server URL and your password to sign in again.")
+            }
             .navigationTitle("Settings")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
