@@ -179,17 +179,21 @@ struct FoldRow: View {
     let toggle: () -> Void
 
     var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 4) {
-                Text(fold.label)
-                Image(systemName: fold.expanded ? "chevron.down" : "chevron.right").font(.caption2.weight(.semibold))
+        if fold.foldable {
+            Button(action: toggle) {
+                HStack(spacing: 4) {
+                    Text(fold.label)
+                    Image(systemName: fold.expanded ? "chevron.down" : "chevron.right").font(.caption2.weight(.semibold))
+                }
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+                .contentShape(Rectangle())
             }
-            .font(.footnote)
-            .foregroundStyle(Theme.muted)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityHint(fold.expanded ? "Hides the steps" : "Shows the steps")
+        } else {
+            Text(fold.label).font(.footnote).foregroundStyle(Theme.muted)
         }
-        .buttonStyle(.plain)
-        .accessibilityHint(fold.expanded ? "Hides the steps" : "Shows the steps")
     }
 }
 

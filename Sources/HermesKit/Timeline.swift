@@ -85,6 +85,8 @@ public struct TurnFold: Identifiable, Hashable, Sendable {
     public let turn: String
     public var label: String
     public var expanded: Bool
+    /// False for a bare marker with no steps behind it ("You stopped this response").
+    public var foldable = true
 }
 
 public struct FileChange: Identifiable, Hashable, Sendable {
@@ -192,6 +194,10 @@ public enum Timeline {
             out += fold
         } else {
             out += body
+            // A turn stopped before any step ran has nothing to fold, but still ends with its marker.
+            if anchored, end?.stopped == true, !turn.contains(where: { $0.kind == .error }) {
+                out.append(.fold(TurnFold(turn: turn[0].id, label: label(turn, end: end), expanded: false, foldable: false)))
+            }
         }
         if let changes { out.append(.changes(changes)) }
         return out
@@ -205,17 +211,20 @@ public enum Timeline {
         let kept = Set([replies.first, replies.last].compactMap { $0 } + notes)
         let hidden = body.indices.filter { !kept.contains($0) }
         guard let anchor = hidden.first, hidden.contains(where: { if case .work = body[$0] { true } else { false } }) else { return nil }
-        let start = turn[0].date
-        let finish = end?.at ?? turn.last(where: { $0.date != nil })?.date
-        let duration = start.flatMap { s in finish.map { formatDuration(max(0, $0.timeIntervalSince(s))) } }
-        let label = end?.stopped == true
-            ? duration.map { "You stopped after \($0)" } ?? "You stopped this response"
-            : duration.map { "Worked for \($0)" } ?? "Worked"
         var out = body
-        let row = TimelineRow.fold(TurnFold(turn: turn[0].id, label: label, expanded: expanded))
+        let row = TimelineRow.fold(TurnFold(turn: turn[0].id, label: label(turn, end: end), expanded: expanded))
         if !expanded { out = body.indices.filter { kept.contains($0) }.map { body[$0] } }
         out.insert(row, at: expanded ? anchor : kept.filter { $0 < anchor }.count)
         return out
+    }
+
+    private static func label(_ turn: [ChatItem], end: TurnEnd?) -> String {
+        let start = turn[0].date
+        let finish = end?.at ?? turn.last(where: { $0.date != nil })?.date
+        let duration = start.flatMap { s in finish.map { formatDuration(max(0, $0.timeIntervalSince(s))) } }
+        return end?.stopped == true
+            ? duration.map { "You stopped after \($0)" } ?? "You stopped this response"
+            : duration.map { "Worked for \($0)" } ?? "Worked"
     }
 
     private static func placeholder(_ status: String?) -> ActivityGroup {
