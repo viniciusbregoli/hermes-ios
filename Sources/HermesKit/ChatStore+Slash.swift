@@ -10,7 +10,10 @@ extension ChatStore {
     /// Runs a composer line that `SlashCommand` accepted; output lands in the transcript as notice rows.
     public func runSlash(_ text: String) async -> SlashOutcome {
         guard let cmd = SlashCommand(text) else { return .done }
-        return await run(cmd, depth: 0)
+        let outcome = await run(cmd, depth: 0)
+        // The gateway pushes session.control.update too; a read covers a chat that missed it.
+        if Self.controlCommands.contains(cmd.name) { await refreshControl() }
+        return outcome
     }
 
     /// `complete.slash` rows for the composer line; empty on any failure.

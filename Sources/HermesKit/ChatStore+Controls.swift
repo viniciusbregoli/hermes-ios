@@ -163,6 +163,12 @@ extension ChatStore {
         todoRevision = -1
         usage = nil
         queued = []
+        queue = []
+        queuePaused = false
+        queueEditing = nil
+        steerFeedback = nil
+        control = nil
+        controlVersion += 1
         notes = [:]
         retryText = nil
         reasoningEffort = ""
@@ -176,6 +182,7 @@ extension ChatStore {
     func handleControls(_ type: String, _ p: JSON) {
         foldSubagents(type, p)
         foldSlash(type, p)
+        foldControl(type, p)
         switch type {
         case "message.start":
             retryText = nil

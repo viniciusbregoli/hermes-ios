@@ -251,6 +251,7 @@ struct MessageAction: Identifiable {
 
 /// Above the composer while a sent message is being edited; Esc or the cross puts the old draft back.
 struct EditBanner: View {
+    var detail = "Sending replaces this message and everything after it."
     let cancel: () -> Void
 
     var body: some View {
@@ -258,7 +259,7 @@ struct EditBanner: View {
             Image(systemName: "pencil").foregroundStyle(Theme.primary)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Editing").font(.footnote.weight(.semibold))
-                Text("Sending replaces this message and everything after it.")
+                Text(detail)
                     .font(.caption2)
                     .foregroundStyle(Theme.muted)
             }
