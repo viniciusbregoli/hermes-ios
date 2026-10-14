@@ -105,7 +105,9 @@ struct BlockView: View {
     static func styled(_ text: AttributedString) -> AttributedString {
         var text = text
         for run in text.runs where run.inlinePresentationIntent?.contains(.code) == true {
-            text[run.range].backgroundColor = Theme.sidebar
+            // A tint of the text color reads on every palette and inside bubbles; Matrix's sidebar is
+            // almost its background.
+            text[run.range].backgroundColor = Theme.foreground.opacity(0.14)
         }
         return text
     }
