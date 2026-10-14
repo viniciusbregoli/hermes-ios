@@ -56,18 +56,26 @@ struct ChatView: View {
                     }
                 }
                 ControlsRow(store: store)
-                Composer(draft: $draft, focused: $composerFocused, running: store.running,
-                         enabled: store.gateway.status == .online) {
-                    let text = draft
-                    draft = ""
-                    let note = bots?.mentionNote(for: text, excluding: activeBot) ?? ""
-                    Task { await store.send(text, note: note) }
-                } stop: {
-                    Task { await store.interrupt() }
+                AttachmentChips(store: store)
+                HStack(alignment: .bottom, spacing: 0) {
+                    AttachButton(store: store)
+                        .padding([.leading, .bottom], 10)
+                        .disabled(store.gateway.status != .online)
+                    Composer(draft: $draft, focused: $composerFocused, running: store.running,
+                             enabled: store.gateway.status == .online,
+                             hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending) {
+                        let text = draft
+                        draft = ""
+                        let note = bots?.mentionNote(for: text, excluding: activeBot) ?? ""
+                        Task { await store.send(text, note: note) }
+                    } stop: {
+                        Task { await store.interrupt() }
+                    }
                 }
             }
             .background(Theme.background)
         }
+        .environment(store.gateway)
         .navigationTitle(store.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -99,14 +107,20 @@ struct ItemView: View {
     var body: some View {
         switch item.kind {
         case .user:
-            HStack {
-                Spacer(minLength: 40)
-                Text(item.text)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: Theme.radius))
-                    .contextMenu { Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(item.text) } }
+            VStack(alignment: .trailing, spacing: 6) {
+                if !item.images.isEmpty || !item.files.isEmpty { MessageAttachments(item: item) }
+                if !item.text.isEmpty {
+                    HStack {
+                        Spacer(minLength: 40)
+                        Text(item.text)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: Theme.radius))
+                            .contextMenu { Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(item.text) } }
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         case .agent:
             if let agent = item.agent { AgentNotice(message: agent, bots: bots) }
         case .assistant:
@@ -228,10 +242,15 @@ struct Composer: View {
     var focused: FocusState<Bool>.Binding
     let running: Bool
     let enabled: Bool
+    var hasAttachments = false
+    /// An attachment is still uploading or failed; sending now would leave it behind.
+    var attaching = false
     let send: () -> Void
     let stop: () -> Void
 
-    private var canSend: Bool { enabled && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSend: Bool {
+        enabled && !attaching && (hasAttachments || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -241,7 +260,7 @@ struct Composer: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(focused.wrappedValue ? Theme.primary : Theme.border))
-            if running && draft.isEmpty {
+            if running && draft.isEmpty && !hasAttachments {
                 Button(action: stop) {
                     Image(systemName: "stop.fill").frame(width: 34, height: 34)
                 }

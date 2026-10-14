@@ -176,6 +176,7 @@ struct QueuedBubbles: View {
     var body: some View {
         ForEach(store.queued) { item in
             VStack(alignment: .trailing, spacing: 2) {
+                if !item.images.isEmpty || !item.files.isEmpty { MessageAttachments(item: item).opacity(0.6) }
                 if !item.text.isEmpty {
                 HStack {
                     Spacer(minLength: 40)
