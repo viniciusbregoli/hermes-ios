@@ -14,7 +14,9 @@ struct ChatView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(store.items) { item in
                         ItemView(item: item, bots: bots).id(item.id)
+                        ItemFooter(store: store, item: item)
                     }
+                    QueuedBubbles(store: store)
                     if store.running {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
@@ -42,6 +44,7 @@ struct ChatView: View {
         .background(Theme.background)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
+                TodosPanel(store: store)
                 ForEach(store.requests) { r in
                     RequestCard(request: r) { store.answer(r, result: $0) }
                 }
@@ -51,6 +54,7 @@ struct ChatView: View {
                         MentionPicker(candidates: candidates, bots: bots) { draft = MentionPicker.complete(draft, with: $0) }
                     }
                 }
+                ControlsRow(store: store)
                 Composer(draft: $draft, focused: $composerFocused, running: store.running,
                          enabled: store.gateway.status == .online) {
                     let text = draft
@@ -68,6 +72,7 @@ struct ChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
+            ToolbarItem(placement: .primaryAction) { ContextMeter(store: store) }
             ToolbarItem(placement: .primaryAction) { ModelMenu(store: store) }
         }
     }
