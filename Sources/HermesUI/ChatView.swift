@@ -34,7 +34,7 @@ struct ChatView: View {
             .scrollDismissesKeyboard(.immediately)
             .overlay {
                 if store.loading { ProgressView() }
-                else if store.items.isEmpty { EmptyChat() }
+                else if store.items.isEmpty { EmptyChat(name: botName) }
             }
             .onChange(of: store.items.last) { _, last in
                 guard let last else { return }
@@ -61,7 +61,7 @@ struct ChatView: View {
                     AttachButton(store: store)
                         .padding([.leading, .bottom], 10)
                         .disabled(store.gateway.status != .online)
-                    Composer(draft: $draft, focused: $composerFocused, running: store.running,
+                    Composer(draft: $draft, focused: $composerFocused, placeholder: "Message \(botName)", running: store.running,
                              enabled: store.gateway.status == .online,
                              hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending) {
                         let text = draft
@@ -88,13 +88,16 @@ struct ChatView: View {
     }
 
     private var activeBot: String { store.profile ?? "default" }
+    private var botName: String { store.profile.flatMap { bots?.bot(named: $0)?.label } ?? "Hermes" }
 }
 
 struct EmptyChat: View {
+    let name: String
+
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: "sparkle").font(.largeTitle).foregroundStyle(Theme.primary)
-            Text("What should Hermes do?").foregroundStyle(Theme.muted)
+            Text("What should \(name) do?").foregroundStyle(Theme.muted)
         }
     }
 }
@@ -241,6 +244,7 @@ struct ToolRow: View {
 struct Composer: View {
     @Binding var draft: String
     var focused: FocusState<Bool>.Binding
+    let placeholder: String
     let running: Bool
     let enabled: Bool
     var hasAttachments = false
@@ -255,7 +259,7 @@ struct Composer: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message Hermes", text: $draft, axis: .vertical)
+            TextField(placeholder, text: $draft, axis: .vertical)
                 .lineLimit(1...8)
                 .focused(focused)
                 .padding(.horizontal, 10)
