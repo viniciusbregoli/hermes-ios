@@ -172,8 +172,19 @@ public final class ChatStore {
         loading = true
         defer { loading = false }
         do {
-            let r = try await gateway.call("session.history", scoped(["session_id": .string(storedId)]))
-            items = (r["messages"]?.array ?? []).compactMap(item(from:))
+            // session.history needs a live session, so the stored transcript comes from the dashboard's REST read.
+            guard let c = gateway.credentials else { throw GatewayError.offline }
+            var comps = URLComponents(url: c.baseURL.appending(path: "api/sessions/\(storedId)/messages"), resolvingAgainstBaseURL: false)!
+            comps.queryItems = [.init(name: "inline_images", value: "false")] + (profile.map { [.init(name: "profile", value: $0)] } ?? [])
+            var r = URLRequest(url: comps.url!)
+            r.setValue("Bearer \(c.accessToken)", forHTTPHeaderField: "Authorization")
+            let messages = try await DelegationValues.send(r)["messages"]?.array ?? []
+            items = messages.compactMap { m in
+                // REST rows name their tool `tool_name`; the gateway's transcript calls it `name`.
+                guard var o = m.object else { return nil }
+                if o["name"] == nil, let tool = o["tool_name"] { o["name"] = tool }
+                return item(from: .object(o))
+            }
         } catch {
             alert = error.localizedDescription
         }
