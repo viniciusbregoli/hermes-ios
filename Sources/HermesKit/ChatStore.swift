@@ -123,6 +123,10 @@ public final class ChatStore {
     public var queueEditing: String? { didSet { if queueEditing == nil { drainQueue() } } }
     /// What became of the last steer or redirect, shown briefly over the composer.
     public var steerFeedback: String?
+    /// Goal, loop and heartbeat of the open chat; folded in Goals.swift.
+    public internal(set) var control: SessionControl?
+    /// Counts control updates, so a read that raced one doesn't roll it back.
+    @ObservationIgnored var controlVersion = 0
     /// Short labels under user messages that steered or redirected a running turn, by item id.
     public internal(set) var notes: [String: String] = [:]
     /// The user message to resend when the last turn failed with a retryable error.
@@ -242,6 +246,7 @@ public final class ChatStore {
         let snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
         guard selectedId == storedId else { return }
         apply(snapshot: snap)
+        Task { await refreshControl() }
     }
 
     /// Opens the profile's one "Bot Chat" (desktop plugins/hermes-bots/canonical-chat.ts). It is created
