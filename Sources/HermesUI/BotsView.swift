@@ -274,7 +274,7 @@ struct AgentNotice: View {
                 Text("From \(sender?.label ?? message.sender)")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Theme.muted)
-                MarkdownText(text: message.body)
+                MarkdownView(text: message.body)
             }
         }
         .padding(10)

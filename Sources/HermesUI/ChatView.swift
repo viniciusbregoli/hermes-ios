@@ -42,6 +42,7 @@ struct ChatView: View {
             }
         }
         .background(Theme.background)
+        .environment(\.credentials, store.gateway.credentials)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 TodosPanel(store: store)
@@ -101,17 +102,23 @@ struct ItemView: View {
             HStack {
                 Spacer(minLength: 40)
                 Text(item.text)
-                    .textSelection(.enabled)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    .contextMenu { Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(item.text) } }
             }
         case .agent:
             if let agent = item.agent { AgentNotice(message: agent, bots: bots) }
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {
                 if !item.reasoning.isEmpty { Reasoning(text: item.reasoning, live: item.streaming && item.text.isEmpty) }
-                if !item.text.isEmpty { MarkdownText(text: item.text) }
+                if !item.text.isEmpty {
+                    MarkdownView(text: item.text, streaming: item.streaming)
+                        .contextMenu {
+                            Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(MarkdownView.plainText(item.text)) }
+                            Button("Copy Markdown", systemImage: "text.document") { Clipboard.copy(item.text) }
+                        }
+                }
             }
         case .tool:
             if let tool = item.tool { ToolRow(tool: tool) }
@@ -211,65 +218,6 @@ struct ToolRow: View {
                 .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
             }
         }
-    }
-}
-
-/// Markdown with fenced code blocks pulled out into monospaced blocks; the rest uses
-/// Foundation's inline markdown (bold, italics, links, inline code).
-struct MarkdownText: View {
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(Self.segments(text).enumerated()), id: \.offset) { _, seg in
-                if seg.code {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(seg.text).font(Theme.mono).textSelection(.enabled).fixedSize()
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
-                } else {
-                    Text(Self.inline(seg.text))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-        .foregroundStyle(Theme.foreground)
-    }
-
-    static func segments(_ text: String) -> [(code: Bool, text: String)] {
-        var out: [(Bool, String)] = []
-        var buffer: [Substring] = []
-        var inCode = false
-        func flush() {
-            let joined = buffer.joined(separator: "\n")
-            let s = inCode ? joined : joined.trimmingCharacters(in: .newlines)
-            if inCode || !s.trimmingCharacters(in: .whitespaces).isEmpty { out.append((inCode, s)) }
-            buffer = []
-        }
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                flush()
-                inCode.toggle()
-            } else {
-                buffer.append(line)
-            }
-        }
-        flush()
-        return out.map { (code: $0.0, text: $0.1) }
-    }
-
-    static func inline(_ s: String) -> AttributedString {
-        // Headings aren't inline syntax; render "# Title" lines as bold.
-        let lines = s.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
-            let trimmed = line.drop { $0 == "#" }
-            return trimmed.count < line.count && trimmed.hasPrefix(" ") ? "**\(trimmed.dropFirst())**" : String(line)
-        }
-        let md = lines.joined(separator: "\n")
-        return (try? AttributedString(markdown: md, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(md)
     }
 }
 
