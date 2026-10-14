@@ -226,6 +226,7 @@ struct SubagentDetail: View {
             }
         }
         .themedList()
+        .scrollDismissesKeyboard(.immediately)
         .navigationTitle("Subagent")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -247,7 +248,7 @@ struct SubagentDetail: View {
                     .lineLimit(1...4)
                     .focused($steerFocused)
                     .onSubmit(sendSteer)
-                Button("Steer", action: sendSteer)
+                Button(action: sendSteer) { Text("Steer").foregroundStyle(Theme.onPrimary) }
                     .buttonStyle(.borderedProminent)
                     .disabled(busy || steer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !item.acceptingSteer)
                     .keyboardShortcut(.return, modifiers: .command)
@@ -271,7 +272,10 @@ struct SubagentDetail: View {
         guard !text.isEmpty, !busy else { return }
         run {
             let queued = try await store.steerSubagent(id, text: text)
-            if queued { steer = "" }
+            if queued {
+                steer = ""
+                steerFocused = false
+            }
             return queued ? ("Queued for the subagent.", false) : ("Rejected: the subagent no longer takes steering.", true)
         }
     }
@@ -360,6 +364,7 @@ struct DelegateSheet: View {
                 }
             }
             .themedList()
+            .scrollDismissesKeyboard(.immediately)
             .navigationTitle("Delegate")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
