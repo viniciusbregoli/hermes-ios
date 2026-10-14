@@ -169,10 +169,12 @@ extension ChatStore {
         fast = false
         yolo = false
         approvalMode = ""
+        subagents = SubagentRoster()
     }
 
     /// Runs before the transcript folding in `handle`, for events of the open chat.
     func handleControls(_ type: String, _ p: JSON) {
+        foldSubagents(type, p)
         switch type {
         case "message.start":
             retryText = nil
