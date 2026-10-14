@@ -89,8 +89,20 @@ public struct Subagent: Identifiable, Hashable, Sendable {
     }
 
     static func toolLine(_ tool: String?, _ preview: String?) -> String? {
-        guard let tool = tool?.nonEmpty else { return compact(preview) }
+        guard let tool = tool?.nonEmpty else { return isPayload(preview) ? nil : compact(preview) }
+        // A JSON preview is the call's arguments or its result, not text: say what the call did, as the timeline does.
+        if isPayload(preview) {
+            let args = (preview?.data(using: .utf8)).flatMap { try? JSON.parse($0) }
+            let call = ToolCall(id: "", name: tool, context: "", args: args, running: false)
+            return Timeline.label(Timeline.unwrapped(call), present: false)
+        }
         return compact(preview, max: 96).map { "\(tool)(\($0))" } ?? tool
+    }
+
+    /// Text that is a serialized object or list. The gateway cuts previews short, so it may not parse.
+    static func isPayload(_ text: String?) -> Bool {
+        guard let first = text?.drop(while: \.isWhitespace).first else { return false }
+        return first == "{" || first == "["
     }
 
     static func compact(_ text: String?, max: Int = 220) -> String? {
