@@ -132,6 +132,11 @@ struct ActivityTests {
         #expect(!done.running && done.exitCode == 2 && items[0].date == Date(timeIntervalSince1970: 950))
     }
 
+    @Test func outputTailDropsColorCodes() {
+        let rows: JSON = [["session_id": "p", "status": "running", "output_tail": "\u{1B}[1m\u{1B}[31mred\u{1B}[0m plain"]]
+        #expect(BackgroundProcess.parse(rows, session: "rt-1", now: Date()).first?.outputTail == "red plain")
+    }
+
     @Test func aFailingSessionDoesNotDropTheOthers() async {
         let lists = await BackgroundProcess.fetch(["rt-1", "rt-2", "rt-3"], limit: 2) { sid in
             if sid == "rt-2" { throw GatewayError.offline }

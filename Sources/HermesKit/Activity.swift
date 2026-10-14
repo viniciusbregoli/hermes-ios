@@ -81,6 +81,11 @@ public struct BackgroundProcess: Hashable, Sendable {
         running || exitedAt.map { now.timeIntervalSince($0) < Self.exitedWindow } ?? false
     }
 
+    /// Processes started on a pty write color codes, which would show as stray brackets.
+    static func stripEscapes(_ s: String) -> String {
+        s.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+    }
+
     static func parse(_ rows: JSON?, session: String, now: Date) -> [BackgroundProcess] {
         (rows?.array ?? []).compactMap { r in
             guard let id = r["session_id"]?.string else { return nil }
@@ -89,7 +94,7 @@ public struct BackgroundProcess: Hashable, Sendable {
                                      running: r["status"]?.string == "running",
                                      startedAt: now.addingTimeInterval(-(r["uptime_seconds"]?.double ?? 0)),
                                      exitedAt: exited > 0 ? Date(timeIntervalSince1970: exited) : nil, exitCode: r["exit_code"]?.int,
-                                     outputTail: r["output_tail"]?.string ?? r["output_preview"]?.string ?? "")
+                                     outputTail: stripEscapes(r["output_tail"]?.string ?? r["output_preview"]?.string ?? ""))
         }
     }
 
