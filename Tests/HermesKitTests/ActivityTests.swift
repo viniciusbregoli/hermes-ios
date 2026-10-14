@@ -154,6 +154,20 @@ struct ActivityTests {
         #expect(await sent.calls == [Sent.Call(method: "process.kill", params: ["session_id": "rt-1", "process_id": "proc_1"])])
     }
 
+    @Test func interruptStopsTheWorkingRowsSession() async {
+        let activity = ActivityStore(gateway: Gateway(credentials: nil))
+        let sent = Sent()
+        activity.call = { method, params in
+            await sent.add(method, params)
+            return [:]
+        }
+        activity.live = [live("rt-1", key: "chat-1", status: "working")]
+        let room = ActivityItem(id: "work-r1", kind: .working(startedAt: nil), target: .room("r1"), title: "Ops", detail: "", date: Date())
+        await activity.interrupt(room)
+        await activity.interrupt(activity.items[0])
+        #expect(await sent.calls == [Sent.Call(method: "session.interrupt", params: ["session_id": "rt-1"])])
+    }
+
     @Test func countsWhatNeedsYouAcrossTheOpenChatAndTheInbox() {
         let gateway = Gateway(credentials: nil)
         let chats = ChatStore(gateway: gateway, defaults: UserDefaults(suiteName: "ActivityTests")!)

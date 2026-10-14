@@ -299,7 +299,7 @@ public final class ActivityStore {
     public var items: [ActivityItem] { ActivityFold.items(snapshot) }
     public var needsYouCount: Int { items.filter { $0.section == .needsYou }.count }
 
-    private(set) var live: [LiveSession] = []
+    var live: [LiveSession] = []
     private(set) var fetched: [String: [ServerRequest]] = [:]
     /// By runtime session id.
     private(set) var processes: [String: [BackgroundProcess]] = [:]
@@ -405,6 +405,13 @@ public final class ActivityStore {
     /// Kills one background process (`process.kill`; never `process.stop`, which kills them all).
     public func kill(process: BackgroundProcess) async throws {
         _ = try await call("process.kill", ["session_id": .string(process.sessionId), "process_id": .string(process.id)])
+        await refresh()
+    }
+
+    /// Stops the turn of a Working chat or bot chat row with `session.interrupt`, as the chat's stop button does.
+    public func interrupt(_ item: ActivityItem) async {
+        guard case .working = item.kind, let row = live.first(where: { "work-\($0.id)" == item.id }) else { return }
+        _ = try? await call("session.interrupt", ["session_id": .string(row.id)])
         await refresh()
     }
 
