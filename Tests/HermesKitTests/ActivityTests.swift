@@ -105,6 +105,55 @@ struct ActivityTests {
         #expect(items[0].detail == "reboot" && items[1].target == .room("r2"))
     }
 
+    @Test func processesFoldIntoBackgroundAndExitedOnesFadeOut() {
+        let now = Date(timeIntervalSince1970: 1000)
+        let rows: JSON = [
+            ["session_id": "proc_run", "command": "npm run dev\n--port 3000", "cwd": "/app", "status": "running",
+             "uptime_seconds": 90, "output_tail": "ready"],
+            ["session_id": "proc_new", "command": "make test", "status": "exited", "uptime_seconds": 200,
+             "exit_code": 2, "exited_at": 950],
+            ["session_id": "proc_old", "command": "sleep 1", "status": "exited", "exit_code": 0, "exited_at": 500],
+            ["session_id": "proc_unknown", "command": "true", "status": "exited", "exit_code": 0],
+        ]
+        var s = ActivitySnapshot()
+        s.live = [live("rt-1", key: "chat-1", status: "idle")]
+        s.chats = ["chat-1": "Web app"]
+        s.processes = BackgroundProcess.parse(rows, session: "rt-1", now: now)
+        s.now = now
+
+        let items = ActivityFold.items(s)
+        #expect(items.map(\.id) == ["proc-proc_new", "proc-proc_run"])
+        #expect(items.allSatisfy { $0.section == .background && $0.target == .chat("chat-1") && $0.title == "Web app" })
+        guard case .background(.process(let run)) = items[1].kind, case .background(.process(let done)) = items[0].kind else {
+            Issue.record("not process rows"); return
+        }
+        #expect(run.running && run.cwd == "/app" && run.outputTail == "ready" && run.startedAt == Date(timeIntervalSince1970: 910))
+        #expect(items[1].detail == "npm run dev")
+        #expect(!done.running && done.exitCode == 2 && items[0].date == Date(timeIntervalSince1970: 950))
+    }
+
+    @Test func aFailingSessionDoesNotDropTheOthers() async {
+        let lists = await BackgroundProcess.fetch(["rt-1", "rt-2", "rt-3"], limit: 2) { sid in
+            if sid == "rt-2" { throw GatewayError.offline }
+            return ["processes": [["session_id": .string("p-\(sid)"), "status": "running"]]]
+        }
+        #expect(lists.keys.sorted() == ["rt-1", "rt-3"])
+        #expect(lists["rt-3"]?.map(\.id) == ["p-rt-3"] && lists["rt-3"]?.first?.sessionId == "rt-3")
+    }
+
+    @Test func killSendsProcessKillForOneProcess() async throws {
+        let activity = ActivityStore(gateway: Gateway(credentials: nil))
+        let sent = Sent()
+        activity.call = { method, params in
+            await sent.add(method, params)
+            return ["status": "killed"]
+        }
+        let p = BackgroundProcess(id: "proc_1", sessionId: "rt-1", command: "sleep 99", cwd: "", running: true,
+                                  startedAt: Date(), outputTail: "")
+        try await activity.kill(process: p)
+        #expect(await sent.calls == [Sent.Call(method: "process.kill", params: ["session_id": "rt-1", "process_id": "proc_1"])])
+    }
+
     @Test func countsWhatNeedsYouAcrossTheOpenChatAndTheInbox() {
         let gateway = Gateway(credentials: nil)
         let chats = ChatStore(gateway: gateway, defaults: UserDefaults(suiteName: "ActivityTests")!)
@@ -117,4 +166,10 @@ struct ActivityTests {
         #expect(activity.needsYouCount == 2)
         #expect(activity.items.first { $0.id == "need-srq-1" }?.target == .chat("s1"))
     }
+}
+
+private actor Sent {
+    struct Call: Equatable { var method: String; var params: [String: JSON] }
+    var calls: [Call] = []
+    func add(_ method: String, _ params: [String: JSON]) { calls.append(Call(method: method, params: params)) }
 }
