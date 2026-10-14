@@ -5,7 +5,7 @@ import Observation
 @MainActor @Observable
 public final class GroupStore {
     public let gateway: Gateway
-    public private(set) var rooms: [Room] = []
+    public internal(set) var rooms: [Room] = []
     public private(set) var loaded = false
     public private(set) var error: String?
     public private(set) var marks: [String: RoomMark]
@@ -180,6 +180,10 @@ public final class RoomStore {
 
     private func readState() async {
         guard let result = try? await gateway.call("groups.state", ["room_id": .string(room.id)]) else { return }
+        apply(state: result)
+    }
+
+    func apply(state result: JSON) {
         if let r = result["room"].flatMap({ Room($0) }) {
             room = r
             groups?.update(r)
