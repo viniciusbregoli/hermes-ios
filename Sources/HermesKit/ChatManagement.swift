@@ -161,8 +161,13 @@ extension ChatStore {
     }
 
     public func archivedSessions() async throws -> [SessionRow] {
-        SessionRow.parse(try await gateway.rest("GET", "api/sessions",
-                                                query: restScoped(["archived": "only", "limit": "100", "order": "recent"]))["sessions"])
+        Self.archivedRows(try await gateway.rest("GET", "api/sessions",
+                                                 query: restScoped(["archived": "only", "limit": "100", "order": "recent"])))
+    }
+
+    /// The list back-fills pinned chats into every page, `archived=only` included, so keep only the archived rows.
+    static func archivedRows(_ list: JSON) -> [SessionRow] {
+        SessionRow.parse(.array((list["sessions"]?.array ?? []).filter { $0["archived"]?.bool == true }))
     }
 
     private func restScoped(_ query: [String: String]) -> [String: String] {

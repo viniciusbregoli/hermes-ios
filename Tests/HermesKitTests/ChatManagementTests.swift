@@ -64,6 +64,12 @@ struct ChatManagementTests {
         #expect(store.pinnedSessions[0].messageCount == 3)
     }
 
+    @Test func archivedListDropsBackfilledPins() {
+        let rows = ChatStore.archivedRows(["sessions": [["id": "old", "archived": true, "pinned": false],
+                                                        ["id": "pin", "archived": false, "pinned": true]]])
+        #expect(rows.map(\.id) == ["old"])
+    }
+
     @Test func rewindParamsConfirmTheCut() {
         let p = ChatStore.rewindParams(session: "rt1", text: "again", row: 14, firstTurn: false, rebind: [10, 14])
         #expect(p["truncate_before_row_id"]?.int == 14)
