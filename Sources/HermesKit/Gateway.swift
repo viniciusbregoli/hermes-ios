@@ -24,7 +24,7 @@ public struct GatewayEvent: Sendable {
 }
 
 /// A request the server sends us (approval, clarify, sudo, ...). Answer it with `Gateway.respond`.
-public struct ServerRequest: Identifiable, Sendable {
+public struct ServerRequest: Identifiable, Hashable, Sendable {
     /// The methods that ask the user something; the others are desktop-only surfaces.
     static let prompts: Set<String> = ["approval", "clarify", "sudo", "secret"]
     public let rpcId: JSON
@@ -140,6 +140,11 @@ public final class Gateway {
             inbox.removeAll { $0.id == r.id }
             inbox.append(r)
         }
+    }
+
+    /// Drops parked prompts the server no longer has open (answered elsewhere, or withdrawn while we were offline).
+    func withdraw(_ ids: Set<String>) {
+        if !ids.isEmpty { inbox.removeAll { ids.contains($0.id) } }
     }
 
     /// Removes and returns the parked prompts of a runtime session.
