@@ -6,7 +6,7 @@ struct GroupsView: View {
     let groups: GroupStore
     let bots: BotStore
     @Binding var showSettings: Bool
-    @State private var path: [String] = []
+    @Binding var path: [String]
     @State private var creating = false
     @State private var disbanding: Room?
     @State private var error: String?

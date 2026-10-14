@@ -5,10 +5,13 @@ public struct RootView: View {
     @State private var store: ChatStore
     @State private var bots: BotStore
     @State private var groups: GroupStore
+    @State private var activity: ActivityStore
     @State private var tab = 0
     @State private var showSettings = false
     /// A chat to open in the Chats tab, asked for from outside it (the Artifacts screen in Settings).
     @State private var jump: String?
+    @State private var botPath: [String] = []
+    @State private var roomPath: [String] = []
     @AppStorage("theme") private var themeId = Palette.nous.id
     @AppStorage("appearance") private var appearance = Appearance.system
     @AppStorage("showTouches") private var showTouches = false
@@ -23,9 +26,11 @@ public struct RootView: View {
         store.onTurnFinished = { title, reply in notifier.post(title: title, body: reply) }
         bots.onTurnFinished = { [weak bots] name, reply in notifier.post(title: bots?.bot(named: name)?.label ?? name, body: reply) }
         #endif
+        let groups = GroupStore(gateway: gateway)
         _store = State(initialValue: store)
         _bots = State(initialValue: bots)
-        _groups = State(initialValue: GroupStore(gateway: gateway))
+        _groups = State(initialValue: groups)
+        _activity = State(initialValue: ActivityStore(gateway: gateway, chats: store, bots: bots, groups: groups))
     }
 
     public var body: some View {
@@ -39,17 +44,25 @@ public struct RootView: View {
                     MainView(store: store, bots: bots, showSettings: $showSettings, jump: $jump)
                         .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                         .tag(0)
-                    BotsView(bots: bots, showSettings: $showSettings)
+                    BotsView(bots: bots, showSettings: $showSettings, path: $botPath)
                         .tabItem { Label("Bots", systemImage: "person.2") }
                         .tag(1)
-                    GroupsView(groups: groups, bots: bots, showSettings: $showSettings)
+                    GroupsView(groups: groups, bots: bots, showSettings: $showSettings, path: $roomPath)
                         .tabItem { Label("Groups", systemImage: "person.3") }
                         .tag(2)
+                    ActivityView(activity: activity, bots: bots, groups: groups, showSettings: $showSettings, open: open)
+                        .tabItem { Label("Activity", systemImage: "bolt.horizontal.circle") }
+                        .badge(activity.needsYouCount)
+                        .tag(3)
                 }
+                // Polls fast while the tab is on screen, slowly otherwise so the badge stays current; stops on sign-out.
+                .onChange(of: tab, initial: true) { activity.start(visible: tab == 3) }
+                .onDisappear { activity.stop() }
                 .background {
                     Button("Chats") { tab = 0 }.keyboardShortcut("1", modifiers: .command).hidden()
                     Button("Bots") { tab = 1 }.keyboardShortcut("2", modifiers: .command).hidden()
                     Button("Groups") { tab = 2 }.keyboardShortcut("3", modifiers: .command).hidden()
+                    Button("Activity") { tab = 3 }.keyboardShortcut("4", modifiers: .command).hidden()
                 }
             }
         }
@@ -70,6 +83,20 @@ public struct RootView: View {
         #if os(iOS)
         .onChange(of: showTouches, initial: true) { _, on in TouchIndicator.shared.setEnabled(on) }
         #endif
+    }
+
+    private func open(_ target: ActivityItem.Target) {
+        switch target {
+        case .chat(let id):
+            tab = 0
+            jump = id
+        case .bot(let name):
+            tab = 1
+            botPath = [name]
+        case .room(let id):
+            tab = 2
+            roomPath = [id]
+        }
     }
 }
 
