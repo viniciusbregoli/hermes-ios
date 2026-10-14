@@ -239,7 +239,7 @@ struct MainView: View {
                         .help("Artifacts (⇧⌘A)")
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings")
                         .keyboardShortcut(",", modifiers: .command)
                 }
             }
@@ -371,11 +371,13 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    Picker("Appearance", selection: $appearance) {
+                    // A dark-only palette ignores the choice, so show what it renders instead of the stored preference.
+                    let darkOnly = Palette.named(themeId).light == nil
+                    Picker("Appearance", selection: darkOnly ? .constant(Appearance.dark) : $appearance) {
                         ForEach(Appearance.allCases) { Text($0.rawValue.capitalized).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    .disabled(Palette.named(themeId).light == nil)
+                    .disabled(darkOnly)
                 }
                 .listRowBackground(Theme.sidebar)
                 Section("Chat text size") {

@@ -55,7 +55,7 @@ struct GroupsView: View {
                         .disabled(groups.gateway.status != .online)
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings")
                 }
             }
             .safeAreaInset(edge: .bottom) { ConnectionBanner(gateway: groups.gateway) }

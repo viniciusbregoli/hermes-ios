@@ -33,7 +33,7 @@ struct BotsView: View {
             .navigationTitle("Bots")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings")
                 }
             }
             .safeAreaInset(edge: .bottom) { ConnectionBanner(gateway: bots.gateway) }

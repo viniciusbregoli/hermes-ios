@@ -25,7 +25,7 @@ struct AttachButton: View {
             Button { pickingFiles = true } label: { Label("Files", systemImage: "folder") }
         } label: {
             Image(systemName: "paperclip")
-                .frame(width: 34, height: 34)
+                .frame(width: 44, height: 44)
                 .foregroundStyle(Theme.muted)
                 .contentShape(Rectangle())
         }
@@ -185,6 +185,7 @@ struct AttachmentChips: View {
                     Image(systemName: "xmark.circle.fill")
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(Theme.background, Theme.foreground)
+                        .tapTarget()
                 }
                 .buttonStyle(.plain)
                 .offset(x: 6, y: -6)

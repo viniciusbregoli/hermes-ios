@@ -334,6 +334,7 @@ struct WorkingControls: View {
                             .foregroundStyle(Theme.onPrimary)
                             .frame(width: 24, height: 24)
                             .background(Theme.primary, in: Circle())
+                            .tapTarget()
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(".", modifiers: .command)
