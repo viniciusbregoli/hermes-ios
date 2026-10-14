@@ -27,7 +27,10 @@ public struct MarkdownNode: Hashable, Sendable {
         case .media: return media.map { Media.path(from: $0).map(Media.name(of:)) ?? $0.absoluteString }.joined(separator: "\n")
         case .row, .headerRow: return children.map(\.plainText).joined(separator: "\t")
         case .item(let n):
-            let body = children.map(\.plainText).joined(separator: "\n")
+            let body = children.map { child -> String in
+                guard case .list = child.kind else { return child.plainText }
+                return child.plainText.split(separator: "\n").map { "  " + $0 }.joined(separator: "\n")
+            }.joined(separator: "\n")
             return (n > 0 ? "\(n). " : "- ") + body
         default: return children.map(\.plainText).joined(separator: kind == .document ? "\n\n" : "\n")
         }

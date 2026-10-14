@@ -80,6 +80,7 @@ struct MarkdownTests {
         #expect(table.children.map(\.kind) == [.headerRow, .row])
         #expect(table.children[1].plainText == "1\t2")
         #expect(doc.children[6].plainText == "print(1)")
+        #expect(bullets.plainText == "- a\n  - b\n- c")
     }
 
     @Test func alertsBecomeCallouts() {
