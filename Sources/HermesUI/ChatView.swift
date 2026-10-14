@@ -25,6 +25,7 @@ struct ChatView: View {
     /// The sent message being edited, and the draft it pushed aside.
     @State private var editing: ChatItem?
     @State private var setAside = ""
+    @State private var speaker = Speaker()
     @Environment(\.scenePhase) private var scenePhase
 
     private static let end = "timeline-end"
@@ -91,6 +92,8 @@ struct ChatView: View {
                 }
                 .animation(.easeOut(duration: 0.18), value: store.steerFeedback)
             }
+            .overlay(alignment: .top) { SpeechBar(speaker: speaker) }
+            .animation(.easeOut(duration: 0.2), value: speaker.state)
             .onChange(of: atEnd) {
                 // Content growing under a follower (streaming, a late layout pass) keeps it pinned to the end.
                 if !atEnd, following, !dragging, !disclosing {
@@ -119,6 +122,7 @@ struct ChatView: View {
             }
             .onChange(of: store.selectedId) { old, _ in
                 following = true
+                speaker.stop()
                 // A new chat getting its id on first send is still the same conversation.
                 if old != nil {
                     pinned = nil
@@ -199,6 +203,7 @@ struct ChatView: View {
                 ToolbarItem(placement: .primaryAction) { ContextMeter(store: store) }
                 ToolbarItem(placement: .primaryAction) { ModelMenu(store: store) }
             }
+            ToolbarItem(placement: .primaryAction) { ChatMenu(store: store, assistant: botName) }
         }
         .onChange(of: draftKey, initial: true) { old, new in
             if old != new { Drafts.save(draft, for: old) }
@@ -209,7 +214,10 @@ struct ChatView: View {
             if !Task.isCancelled { Drafts.save(draft, for: draftKey) }
         }
         .sensoryFeedback(.success, trigger: store.finishedTurns) { _, _ in store.visible }
-        .onDisappear { Drafts.save(draft, for: draftKey) }
+        .onDisappear {
+            Drafts.save(draft, for: draftKey)
+            speaker.stop()
+        }
         .onChange(of: scenePhase, initial: true) { store.appActive = scenePhase == .active }
     }
 
@@ -249,8 +257,11 @@ struct ChatView: View {
     }
 
     private func actions(for item: ChatItem) -> [MessageAction] {
-        guard !store.readOnly else { return [] }
         var out: [MessageAction] = []
+        if item.kind == .assistant, !item.text.isEmpty {
+            out.append(MessageAction(title: "Read aloud", icon: "speaker.wave.2") { speaker.speak(item.text, gateway: store.gateway) })
+        }
+        guard !store.readOnly else { return out }
         if store.canEdit(item) {
             out.append(MessageAction(title: "Edit and resend", icon: "pencil") {
                 if editing == nil, store.queueEditing == nil { setAside = draft }
