@@ -77,6 +77,9 @@ public final class ChatStore {
     public private(set) var botChatError: String?
     public internal(set) var items: [ChatItem] = []
     public private(set) var loading = false
+    /// Set by `show`: a transcript to read, with no session behind it.
+    public private(set) var readOnly = false
+    @ObservationIgnored private var shownTitle = ""
     public internal(set) var running = false
     public private(set) var statusText: String?
     public private(set) var model = ""
@@ -138,6 +141,7 @@ public final class ChatStore {
     }
 
     public var title: String {
+        if readOnly { return shownTitle }
         guard let id = selectedId else { return "New chat" }
         if id == canonicalId, let botChatTitle { return botChatTitle }
         return sessions.first { $0.id == id }?.title.nonEmpty ?? "Chat"
@@ -158,6 +162,29 @@ public final class ChatStore {
 
     public func open(_ storedId: String?) async {
         do { try await load(storedId) } catch { alert = error.localizedDescription }
+    }
+
+    /// Shows a stored chat's transcript without attaching an agent to it, so nothing can be sent (a routine's run).
+    public func show(_ storedId: String, title: String) async {
+        readOnly = true
+        shownTitle = title
+        selectedId = storedId
+        loading = true
+        defer { loading = false }
+        do {
+            // session.history needs a live session, so the stored transcript comes from the dashboard's REST read.
+            var query = ["inline_images": "false"]
+            if let profile { query["profile"] = profile }
+            let messages = try await gateway.rest("GET", "api/sessions/\(storedId)/messages", query: query)["messages"]?.array ?? []
+            items = messages.compactMap { m in
+                // REST rows name their tool `tool_name`; the gateway's transcript calls it `name`.
+                guard var o = m.object else { return nil }
+                if o["name"] == nil, let tool = o["tool_name"] { o["name"] = tool }
+                return item(from: .object(o))
+            }
+        } catch {
+            alert = error.localizedDescription
+        }
     }
 
     private func load(_ storedId: String?) async throws {
@@ -555,7 +582,7 @@ public final class ChatStore {
             await refreshSessions()
             // ponytail: re-resume reloads the whole transcript; session.events.since would replay
             // only the missed deltas if reconnects mid-stream become common.
-            if let id = selectedId {
+            if let id = selectedId, !readOnly {
                 runtimeId = nil
                 await open(id)
             }

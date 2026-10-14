@@ -306,6 +306,12 @@ struct SettingsView: View {
                 }
                 .listRowBackground(Theme.sidebar)
                 SubagentSettingsSection(gateway: gateway)
+                Section {
+                    NavigationLink { RoutinesView(gateway: gateway, profile: nil) } label: {
+                        Label("Routines", systemImage: "clock.arrow.circlepath")
+                    }
+                }
+                .listRowBackground(Theme.sidebar)
                 Section("Gateway") {
                     LabeledContent("Server", value: gateway.credentials?.baseURL.absoluteString ?? "")
                     LabeledContent("User", value: gateway.credentials?.username ?? "")

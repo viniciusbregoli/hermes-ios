@@ -11,6 +11,10 @@ public struct Bot: Identifiable, Hashable, Sendable {
     public var pinned = false
     public var hidden = false
     public var hasAvatar = false
+    /// The whole `ui_meta["hermes-bots"]` object; a write replaces it, so keys this app doesn't edit ride along.
+    public var meta: JSON?
+    /// Its compare-and-swap revision; nil when the gateway predates them.
+    public var metaRevision: Int?
     /// Stored id of the canonical "Bot Chat", following compression to the lineage tip.
     public var canonicalId: String?
     public var preview = ""
@@ -30,6 +34,8 @@ public struct Bot: Identifiable, Hashable, Sendable {
         guard let name = row["name"]?.string else { return nil }
         self.name = name
         let meta = row["ui_meta"]?["hermes-bots"]
+        self.meta = meta
+        metaRevision = row["ui_meta_revisions"].map { $0["hermes-bots"]?.int ?? 0 }
         title = meta?["title"]?.string?.trimmingCharacters(in: .whitespaces) ?? ""
         pinned = meta?["pinned"]?.bool ?? false
         hidden = meta?["hidden"]?.bool ?? false
@@ -142,6 +148,11 @@ public final class BotStore {
               let comma = url.firstIndex(of: ","), let data = Data(base64Encoded: String(url[url.index(after: comma)...]))
         else { return }
         avatars[bot.name] = data
+    }
+
+    /// Shows a just-uploaded avatar (or none) without waiting for the next roster read.
+    public func setAvatar(_ name: String, _ data: Data?) {
+        avatars[name] = data
     }
 
     /// Tells the roster which runtime session shows a bot's chat, so its row can say "thinking".

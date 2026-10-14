@@ -9,15 +9,19 @@ import Foundation
 extension Gateway {
     /// A dashboard REST call (`/api/...`) with the bearer token; an expired token is refreshed once.
     public func rest(_ method: String = "GET", _ path: String, query: [String: String] = [:],
-                     body: [String: JSON]? = nil) async throws -> JSON {
+                     body: [String: JSON]? = nil, timeout: TimeInterval = 60) async throws -> JSON {
         guard let c = credentials else { throw GatewayError.offline }
         do {
-            return try await Self.send(Self.restRequest(method, path, query: query, body: body, credentials: c))
+            var r = Self.restRequest(method, path, query: query, body: body, credentials: c)
+            r.timeoutInterval = timeout
+            return try await Self.send(r)
         } catch AuthError.expired {
             // ponytail: two calls expiring together refresh twice; single-flight the refresh if that ever bites.
             let fresh = try await Auth.refresh(c)
             credentials = fresh
-            return try await Self.send(Self.restRequest(method, path, query: query, body: body, credentials: fresh))
+            var r = Self.restRequest(method, path, query: query, body: body, credentials: fresh)
+            r.timeoutInterval = timeout
+            return try await Self.send(r)
         }
     }
 

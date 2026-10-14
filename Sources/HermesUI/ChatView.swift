@@ -122,49 +122,51 @@ struct ChatView: View {
         .background(Theme.background)
         .environment(\.credentials, store.gateway.credentials)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                TodosPanel(store: store)
-                ForEach(store.requests) { r in
-                    RequestCard(request: r) { store.answer(r, result: $0) }
-                }
-                if let bots, let query = MentionPicker.query(draft) {
-                    let candidates = bots.mentionCandidates(query, excluding: activeBot)
-                    if !candidates.isEmpty {
-                        MentionPicker(candidates: candidates, bots: bots) { draft = MentionPicker.complete(draft, with: $0) }
+            if !store.readOnly {
+                VStack(spacing: 0) {
+                    TodosPanel(store: store)
+                    ForEach(store.requests) { r in
+                        RequestCard(request: r) { store.answer(r, result: $0) }
                     }
-                }
-                SlashPicker(store: store, menu: slash, draft: $draft, run: runSlash)
-                SubagentsBar(store: store)
-                ControlsRow(store: store, draft: $draft)
-                if editing != nil { EditBanner(cancel: endEditing) }
-                AttachmentChips(store: store)
-                HStack(alignment: .bottom, spacing: 0) {
-                    AttachButton(store: store)
-                        .padding([.leading, .bottom], 10)
-                        .disabled(store.gateway.status != .online)
-                    Composer(draft: $draft, focused: $composerFocused, placeholder: editing == nil ? "Message \(botName)" : "Edit message",
-                             running: store.running, enabled: store.gateway.status == .online,
-                             hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending) {
-                        let text = draft
-                        // An edit resends its text as written, even when it starts with a slash.
-                        if let edit = editing {
-                            endEditing()
-                            pinNext = true
-                            Task { await store.rewind(edit, to: text) }
-                            return
+                    if let bots, let query = MentionPicker.query(draft) {
+                        let candidates = bots.mentionCandidates(query, excluding: activeBot)
+                        if !candidates.isEmpty {
+                            MentionPicker(candidates: candidates, bots: bots) { draft = MentionPicker.complete(draft, with: $0) }
                         }
-                        if SlashCommand(draft) != nil { return runSlash(draft) }
-                        draft = ""
-                        Drafts.save("", for: draftKey)
-                        pinNext = true
-                        Notifier.shared.prepare()
-                        let note = bots?.mentionNote(for: text, excluding: activeBot) ?? ""
-                        Task { await store.send(text, note: note) }
                     }
+                    SlashPicker(store: store, menu: slash, draft: $draft, run: runSlash)
+                    SubagentsBar(store: store)
+                    ControlsRow(store: store, draft: $draft)
+                    if editing != nil { EditBanner(cancel: endEditing) }
+                    AttachmentChips(store: store)
+                    HStack(alignment: .bottom, spacing: 0) {
+                        AttachButton(store: store)
+                            .padding([.leading, .bottom], 10)
+                            .disabled(store.gateway.status != .online)
+                        Composer(draft: $draft, focused: $composerFocused, placeholder: editing == nil ? "Message \(botName)" : "Edit message",
+                                 running: store.running, enabled: store.gateway.status == .online,
+                                 hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending) {
+                            let text = draft
+                            // An edit resends its text as written, even when it starts with a slash.
+                            if let edit = editing {
+                                endEditing()
+                                pinNext = true
+                                Task { await store.rewind(edit, to: text) }
+                                return
+                            }
+                            if SlashCommand(draft) != nil { return runSlash(draft) }
+                            draft = ""
+                            Drafts.save("", for: draftKey)
+                            pinNext = true
+                            Notifier.shared.prepare()
+                            let note = bots?.mentionNote(for: text, excluding: activeBot) ?? ""
+                            Task { await store.send(text, note: note) }
+                        }
+                    }
+                    .modifier(SlashKeys(menu: slash, draft: draft))
                 }
-                .modifier(SlashKeys(menu: slash, draft: draft))
+                .background(Theme.background)
             }
-            .background(Theme.background)
         }
         .environment(store.gateway)
         .environment(slash)
@@ -174,8 +176,10 @@ struct ChatView: View {
         .toolbar(.hidden, for: .tabBar)
         #endif
         .toolbar {
-            ToolbarItem(placement: .primaryAction) { ContextMeter(store: store) }
-            ToolbarItem(placement: .primaryAction) { ModelMenu(store: store) }
+            if !store.readOnly {
+                ToolbarItem(placement: .primaryAction) { ContextMeter(store: store) }
+                ToolbarItem(placement: .primaryAction) { ModelMenu(store: store) }
+            }
         }
         .onChange(of: draftKey, initial: true) { old, new in
             if old != new { Drafts.save(draft, for: old) }
@@ -226,6 +230,7 @@ struct ChatView: View {
     }
 
     private func actions(for item: ChatItem) -> [MessageAction] {
+        guard !store.readOnly else { return [] }
         var out: [MessageAction] = []
         if store.canEdit(item) {
             out.append(MessageAction(title: "Edit and resend", icon: "pencil") {

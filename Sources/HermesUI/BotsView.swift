@@ -175,7 +175,7 @@ struct BotChatScreen: View {
                 }
             }
             .sheet(isPresented: $showChats) {
-                BotChatsSheet(store: store, label: bot?.label ?? name).themedList()
+                BotChatsSheet(store: store, bots: bots, label: bot?.label ?? name).themedList()
             }
             .task(id: bots.gateway.status) {
                 store.botChatTitle = bot?.label
@@ -202,6 +202,7 @@ struct BotChatScreen: View {
 /// The bot's other chats (and a way back to its Bot Chat or into a new one).
 struct BotChatsSheet: View {
     let store: ChatStore
+    let bots: BotStore
     let label: String
     @State private var query = ""
     @State private var search = SearchState()
@@ -225,6 +226,16 @@ struct BotChatsSheet: View {
                             Label("New chat with \(label)", systemImage: "square.and.pencil")
                         }
                         .keyboardShortcut("n", modifiers: .command)
+                    }
+                    .listRowBackground(Theme.sidebar)
+                    Section {
+                        NavigationLink { RoutinesView(gateway: store.gateway, profile: store.profile) } label: {
+                            Label("Routines", systemImage: "clock.arrow.circlepath")
+                        }
+                        NavigationLink { BotSettingsView(bots: bots, name: store.profile ?? "default") } label: {
+                            Label("Bot settings", systemImage: "slider.horizontal.3")
+                        }
+                        .keyboardShortcut(",", modifiers: .command)
                     }
                     .listRowBackground(Theme.sidebar)
                     Section("Other chats") {
