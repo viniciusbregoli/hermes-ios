@@ -94,7 +94,7 @@ struct ScheduleText: View {
         let words = Schedule.describe(schedule)
         VStack(alignment: .leading, spacing: 1) {
             Text(words ?? schedule).font(.caption).foregroundStyle(Theme.foreground)
-            if words != nil {
+            if let words, words.lowercased() != schedule.lowercased() {
                 Text(schedule).font(Theme.monoSmall).foregroundStyle(Theme.muted)
             }
         }
@@ -111,10 +111,10 @@ struct RunTimes: View {
             } else if !routine.enabled {
                 Text("Paused")
             } else if let next = routine.nextRun {
-                Text("Next \(next, format: .relative(presentation: .named))")
+                Text("Next \(next, format: .relative(presentation: .numeric))")
             }
             if let last = routine.lastRun {
-                Text("Last \(last, format: .relative(presentation: .named))")
+                Text("Last run \(last, format: .relative(presentation: .numeric))")
             }
         }
         .font(.caption2)
@@ -285,6 +285,11 @@ struct RunTranscript: View {
         ChatView(store: store, bots: nil)
             .overlay { if store.loading && store.items.isEmpty { ProgressView() } }
             .task { await store.show(sessionId, title: run.title.nonEmpty ?? "Run") }
+            .alert("Run", isPresented: Binding(get: { store.alert != nil }, set: { if !$0 { store.alert = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(store.alert ?? "")
+            }
     }
 }
 
