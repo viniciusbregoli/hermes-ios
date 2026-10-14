@@ -74,6 +74,15 @@ public struct BackgroundProcess: Hashable, Sendable {
     /// Set once it exited (nil while running, or if the server doesn't know when).
     public var exitedAt: Date?
     public var exitCode: Int?
+    /// Why it ended ("killed" after a Kill), when the server says.
+    public var completionReason: String?
+    /// The user stopped it; a SIGTERM exit reads the same when the server sends no reason.
+    public var killed: Bool { completionReason == "killed" || exitCode == -15 }
+
+    public enum Outcome: Sendable { case running, exited, stopped, failed }
+    public var outcome: Outcome {
+        if running { .running } else if killed { .stopped } else if exitCode == 0 { .exited } else { .failed }
+    }
     /// The last few thousand characters of its output.
     public var outputTail: String
 
@@ -107,6 +116,7 @@ public struct BackgroundProcess: Hashable, Sendable {
                                      running: r["status"]?.string == "running",
                                      startedAt: now.addingTimeInterval(-(r["uptime_seconds"]?.double ?? 0)),
                                      exitedAt: exited > 0 ? Date(timeIntervalSince1970: exited) : nil, exitCode: r["exit_code"]?.int,
+                                     completionReason: r["completion_reason"]?.string,
                                      outputTail: stripEscapes(r["output_tail"]?.string ?? r["output_preview"]?.string ?? ""))
         }
     }
