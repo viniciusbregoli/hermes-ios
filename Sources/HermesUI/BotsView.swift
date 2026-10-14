@@ -5,9 +5,10 @@ import HermesKit
 struct BotsView: View {
     let bots: BotStore
     @Binding var showSettings: Bool
+    @Binding var path: [String]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List(bots.bots) { bot in
                 NavigationLink(value: bot.name) { BotRow(bot: bot, bots: bots) }
                     .listRowBackground(Theme.sidebar)

@@ -132,6 +132,11 @@ struct ActivityTests {
         #expect(!done.running && done.exitCode == 2 && items[0].date == Date(timeIntervalSince1970: 950))
     }
 
+    @Test func outputTailDropsColorCodes() {
+        let rows: JSON = [["session_id": "p", "status": "running", "output_tail": "\u{1B}[1m\u{1B}[31mred\u{1B}[0m plain"]]
+        #expect(BackgroundProcess.parse(rows, session: "rt-1", now: Date()).first?.outputTail == "red plain")
+    }
+
     @Test func aFailingSessionDoesNotDropTheOthers() async {
         let lists = await BackgroundProcess.fetch(["rt-1", "rt-2", "rt-3"], limit: 2) { sid in
             if sid == "rt-2" { throw GatewayError.offline }
@@ -152,6 +157,20 @@ struct ActivityTests {
                                   startedAt: Date(), outputTail: "")
         try await activity.kill(process: p)
         #expect(await sent.calls == [Sent.Call(method: "process.kill", params: ["session_id": "rt-1", "process_id": "proc_1"])])
+    }
+
+    @Test func interruptStopsTheWorkingRowsSession() async {
+        let activity = ActivityStore(gateway: Gateway(credentials: nil))
+        let sent = Sent()
+        activity.call = { method, params in
+            await sent.add(method, params)
+            return [:]
+        }
+        activity.live = [live("rt-1", key: "chat-1", status: "working")]
+        let room = ActivityItem(id: "work-r1", kind: .working(startedAt: nil), target: .room("r1"), title: "Ops", detail: "", date: Date())
+        await activity.interrupt(room)
+        await activity.interrupt(activity.items[0])
+        #expect(await sent.calls == [Sent.Call(method: "session.interrupt", params: ["session_id": "rt-1"])])
     }
 
     @Test func countsWhatNeedsYouAcrossTheOpenChatAndTheInbox() {

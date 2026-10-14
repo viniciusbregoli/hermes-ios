@@ -81,6 +81,11 @@ public struct BackgroundProcess: Hashable, Sendable {
         running || exitedAt.map { now.timeIntervalSince($0) < Self.exitedWindow } ?? false
     }
 
+    /// Processes started on a pty write color codes, which would show as stray brackets.
+    static func stripEscapes(_ s: String) -> String {
+        s.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+    }
+
     static func parse(_ rows: JSON?, session: String, now: Date) -> [BackgroundProcess] {
         (rows?.array ?? []).compactMap { r in
             guard let id = r["session_id"]?.string else { return nil }
@@ -89,7 +94,7 @@ public struct BackgroundProcess: Hashable, Sendable {
                                      running: r["status"]?.string == "running",
                                      startedAt: now.addingTimeInterval(-(r["uptime_seconds"]?.double ?? 0)),
                                      exitedAt: exited > 0 ? Date(timeIntervalSince1970: exited) : nil, exitCode: r["exit_code"]?.int,
-                                     outputTail: r["output_tail"]?.string ?? r["output_preview"]?.string ?? "")
+                                     outputTail: stripEscapes(r["output_tail"]?.string ?? r["output_preview"]?.string ?? ""))
         }
     }
 
@@ -299,7 +304,7 @@ public final class ActivityStore {
     public var items: [ActivityItem] { ActivityFold.items(snapshot) }
     public var needsYouCount: Int { items.filter { $0.section == .needsYou }.count }
 
-    private(set) var live: [LiveSession] = []
+    var live: [LiveSession] = []
     private(set) var fetched: [String: [ServerRequest]] = [:]
     /// By runtime session id.
     private(set) var processes: [String: [BackgroundProcess]] = [:]
@@ -405,6 +410,13 @@ public final class ActivityStore {
     /// Kills one background process (`process.kill`; never `process.stop`, which kills them all).
     public func kill(process: BackgroundProcess) async throws {
         _ = try await call("process.kill", ["session_id": .string(process.sessionId), "process_id": .string(process.id)])
+        await refresh()
+    }
+
+    /// Stops the turn of a Working chat or bot chat row with `session.interrupt`, as the chat's stop button does.
+    public func interrupt(_ item: ActivityItem) async {
+        guard case .working = item.kind, let row = live.first(where: { "work-\($0.id)" == item.id }) else { return }
+        _ = try? await call("session.interrupt", ["session_id": .string(row.id)])
         await refresh()
     }
 
