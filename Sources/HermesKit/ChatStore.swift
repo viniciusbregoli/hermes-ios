@@ -102,9 +102,10 @@ public final class ChatStore {
     public var onScreen = false { didSet { markRead() } }
     public var appActive = true { didSet { markRead() } }
     public var visible: Bool { onScreen && appActive }
-    /// Chats whose turn finished while they were off screen.
-    // ponytail: in memory only, so dots clear on relaunch; persist the set if that matters.
-    public internal(set) var unread: Set<String> = []
+    /// Chats whose turn finished while they were off screen, with when; kept across launches.
+    public internal(set) var unread: [String: Date] = [:] {
+        didSet { if profile == nil, unread != oldValue { defaults.set(unread, forKey: Self.unreadKey) } }
+    }
     /// Called when a turn finishes while the chat is off screen, with the chat title and the reply.
     @ObservationIgnored public var onTurnFinished: ((_ title: String, _ reply: String) -> Void)?
 
@@ -141,10 +142,15 @@ public final class ChatStore {
     @ObservationIgnored var openerAt: Int?
 
     @ObservationIgnored private var nextLocalId = 0
+    @ObservationIgnored private let defaults: UserDefaults
+    static let unreadKey = "chats.unread"
 
-    public init(gateway: Gateway, profile: String? = nil) {
+    public init(gateway: Gateway, profile: String? = nil, defaults: UserDefaults = .standard) {
         self.gateway = gateway
         self.profile = profile
+        self.defaults = defaults
+        // Only the Chats list shows dots; a bot's chats would overwrite its marks with their empty ones.
+        if profile == nil { unread = defaults.dictionary(forKey: Self.unreadKey) as? [String: Date] ?? [:] }
         gateway.listen(self, event: { [weak self] in self?.handle($0) },
                        request: { [weak self] in self?.claim($0) ?? false },
                        connected: { [weak self] in self?.reconnected() })
@@ -160,14 +166,20 @@ public final class ChatStore {
     // MARK: - Actions
 
     private func markRead() {
-        if visible, let id = selectedId { unread.remove(id) }
+        if visible, let id = selectedId { unread[id] = nil }
     }
 
     public func refreshSessions() async {
         guard let r = try? await gateway.call("session.list", scoped(["limit": 200])) else { return }
+        applySessions(r)
+        await refreshPins()
+    }
+
+    func applySessions(_ r: JSON) {
         sessionsLoaded = true
         sessions = SessionRow.parse(r["sessions"])
-        await refreshPins()
+        let listed = Set(sessions.map(\.id))
+        unread = unread.filter { listed.contains($0.key) }
     }
 
     public func open(_ storedId: String?) async {
@@ -215,7 +227,7 @@ public final class ChatStore {
             resetControls()
         }
         guard let storedId else { return }
-        unread.remove(storedId)
+        unread[storedId] = nil
         loading = true
         defer { loading = false }
         let snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
@@ -518,7 +530,7 @@ public final class ChatStore {
         turnStartedAt = nil
         if status != "error" { finishedTurns += 1 }
         if !visible {
-            if let id = selectedId, profile == nil { unread.insert(id) }
+            if let id = selectedId, profile == nil { unread[id] = Date() }
             let reply = items.last { $0.kind == .assistant }?.text ?? ""
             onTurnFinished?(title, status == "error" ? "The turn failed." : reply.nonEmpty ?? "Finished.")
         }

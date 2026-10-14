@@ -98,12 +98,13 @@ public final class BotStore {
     public private(set) var avatars: [String: Data] = [:]
     /// Bots with a turn running in a chat this app has open.
     public private(set) var thinking: Set<String> = []
-    /// Bots whose turn finished while their chat was off screen.
-    // ponytail: in memory only, like ChatStore.unread.
-    public private(set) var unread: Set<String> = []
+    /// Bots whose turn finished while their chat was off screen, with when; kept across launches.
+    public private(set) var unread: [String: Date] = [:] {
+        didSet { if unread != oldValue { defaults.set(unread, forKey: Self.unreadKey) } }
+    }
     /// The bot whose chat is on screen with the app active; set by the chat view.
     public var visibleBot: String? {
-        didSet { if let visibleBot { unread.remove(visibleBot) } }
+        didSet { if let visibleBot { unread[visibleBot] = nil } }
     }
     /// Called when a bot's turn finishes while its chat is off screen, with the bot name and the reply.
     @ObservationIgnored public var onTurnFinished: ((_ bot: String, _ reply: String) -> Void)?
@@ -112,9 +113,13 @@ public final class BotStore {
     @ObservationIgnored private var avatarRequests: Set<String> = []
     @ObservationIgnored private var lastRefresh = Date.distantPast
     @ObservationIgnored private var refreshing = false
+    @ObservationIgnored private let defaults: UserDefaults
+    static let unreadKey = "bots.unread"
 
-    public init(gateway: Gateway) {
+    public init(gateway: Gateway, defaults: UserDefaults = .standard) {
         self.gateway = gateway
+        self.defaults = defaults
+        unread = defaults.dictionary(forKey: Self.unreadKey) as? [String: Date] ?? [:]
         gateway.listen(self, event: { [weak self] in self?.handle($0) },
                        connected: { [weak self] in Task { await self?.refresh() } })
     }
@@ -125,6 +130,8 @@ public final class BotStore {
         defer { refreshing = false; lastRefresh = Date() }
         do {
             bots = Bot.roster(try await gateway.call("profiles.list"))
+            let listed = Set(bots.map(\.name))
+            unread = unread.filter { listed.contains($0.key) }
             loaded = true
             error = nil
         } catch {
@@ -233,7 +240,7 @@ public final class BotStore {
             guard let bot = runtimes[e.sessionId] else { return }
             thinking.remove(bot)
             if bot != visibleBot {
-                unread.insert(bot)
+                unread[bot] = Date()
                 let failed = e.payload["status"]?.string == "error"
                 onTurnFinished?(bot, failed ? "The turn failed." : e.payload["text"]?.string?.nonEmpty ?? "Finished.")
             }
