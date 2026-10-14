@@ -6,6 +6,21 @@ public struct GatewayEvent: Sendable {
     /// Runtime session id; empty for global broadcasts.
     public let sessionId: String
     public let payload: JSON
+    /// Per-session sequence number the server stamps on session events, for reconnect replay.
+    public let seq: Int?
+
+    init(type: String, sessionId: String, payload: JSON, seq: Int? = nil) {
+        self.type = type
+        self.sessionId = sessionId
+        self.payload = payload
+        self.seq = seq
+    }
+
+    /// From an event frame's `params`, which is also the shape `session.events.since` returns.
+    init(params p: JSON) {
+        self.init(type: p["type"]?.string ?? "", sessionId: p["session_id"]?.string ?? "", payload: p["payload"] ?? .null,
+                  seq: p["seq"]?.int)
+    }
 }
 
 /// A request the server sends us (approval, clarify, sudo, ...). Answer it with `Gateway.respond`.
@@ -43,6 +58,8 @@ public final class Gateway {
 
     public private(set) var status: Status = .offline
     public private(set) var lastError: String?
+    /// Identifies the server process's event numbering (`gateway.ready`); a new one means seqs restarted.
+    @ObservationIgnored public private(set) var replayEpoch: String?
     public var credentials: Credentials? {
         didSet { if credentials != oldValue { Keychain.save(credentials) } }
     }
@@ -193,9 +210,13 @@ public final class Gateway {
             if let id = msg["id"], !id.isNull {
                 dispatch(ServerRequest(rpcId: id, method: method, params: msg["params"] ?? .null))
             } else if method == "event", let p = msg["params"] {
-                let event = GatewayEvent(type: p["type"]?.string ?? "", sessionId: p["session_id"]?.string ?? "",
-                                         payload: p["payload"] ?? .null)
-                if event.type == "gateway.ready" { handshake() } else { dispatch(event) }
+                let event = GatewayEvent(params: p)
+                if event.type == "gateway.ready" {
+                    replayEpoch = event.payload["replay_epoch"]?.string
+                    handshake()
+                } else {
+                    dispatch(event)
+                }
             }
             return
         }

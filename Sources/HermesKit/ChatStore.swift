@@ -68,7 +68,9 @@ public final class ChatStore {
     public private(set) var sessionsLoaded = false
     /// Stored id of the open chat; nil means a new, unsent chat.
     public private(set) var selectedId: String?
-    public private(set) var runtimeId: String?
+    public private(set) var runtimeId: String? {
+        didSet { if runtimeId != oldValue { lastSeq = 0 } }
+    }
     /// Stored id of the profile's "Bot Chat" once `openBotChat` found or made it.
     public private(set) var canonicalId: String?
     /// Shown as the Bot Chat's title instead of its stored one.
@@ -130,6 +132,12 @@ public final class ChatStore {
     /// Durable row ids of live user messages (from prompt.submit), and history rows a rewind renumbered;
     /// nil means the row is gone. Transcript rows carry theirs in the item id. See `rowId(of:)`.
     var rowIds: [String: Int?] = [:]
+    /// Highest event seq handled for `runtimeId`, and the gateway epoch it counts in.
+    @ObservationIgnored var lastSeq = 0
+    @ObservationIgnored var seqEpoch: String?
+    /// The open chat's live events, parked while a reconnect replay is in flight so they run after the gap.
+    @ObservationIgnored var held: [GatewayEvent]?
+
     @ObservationIgnored private var nextLocalId = 0
 
     public init(gateway: Gateway, profile: String? = nil) {
@@ -404,6 +412,13 @@ public final class ChatStore {
     // MARK: - Events
 
     private func handle(_ e: GatewayEvent) {
+        if e.sessionId == runtimeId, let seq = e.seq {
+            if held != nil { held?.append(e); return }
+            // Replayed and live copies of one event share a seq; the second is a duplicate.
+            guard seq > lastSeq else { return }
+            lastSeq = seq
+            seqEpoch = gateway.replayEpoch
+        }
         let p = e.payload
         if e.sessionId == runtimeId { handleControls(e.type, p) }
         if e.sessionId.isEmpty {
@@ -578,15 +593,51 @@ public final class ChatStore {
     // MARK: - Lifecycle
 
     private func reconnected() {
+        let replay = Self.canReplay(runtimeId: runtimeId, lastSeq: lastSeq, seenEpoch: seqEpoch, epoch: gateway.replayEpoch)
+        // Park from the start: nothing for this session may advance the watermark ahead of the gap.
+        if replay { held = [] }
         Task {
             await refreshSessions()
-            // ponytail: re-resume reloads the whole transcript; session.events.since would replay
-            // only the missed deltas if reconnects mid-stream become common.
-            if let id = selectedId, !readOnly {
-                runtimeId = nil
-                await open(id)
-            }
+            guard let id = selectedId, !readOnly else { held = nil; return }
+            if replay, await replayMissed() { return }
+            held = nil
+            runtimeId = nil
+            await open(id)
         }
+    }
+
+    /// Whether a reconnect can replay the open chat's missed events instead of reloading it: the chat
+    /// has a live session that saw events, and the server process (its seq numbering) is the same one.
+    static func canReplay(runtimeId: String?, lastSeq: Int, seenEpoch: String?, epoch: String?) -> Bool {
+        runtimeId != nil && lastSeq > 0 && seenEpoch != nil && seenEpoch == epoch
+    }
+
+    /// Rebinds the open chat's live session to the new socket, then runs only the events it missed.
+    private func replayMissed() async -> Bool {
+        guard let sid = runtimeId else { return false }
+        do {
+            // Until rebound, the server sends this session's events nowhere.
+            _ = try await gateway.call("session.activate", ["session_id": .string(sid), "omit_messages": true])
+            let r = try await gateway.call("session.events.since", ["session_id": .string(sid), "last_seen": .number(Double(lastSeq))])
+            return runtimeId == sid && applyReplay(r)
+        } catch {
+            return false
+        }
+    }
+
+    /// Folds a `session.events.since` answer and the live events parked meanwhile, in seq order.
+    /// False when the replay has a hole (window passed, server restarted) and the chat must reload.
+    func applyReplay(_ r: JSON) -> Bool {
+        if r["truncated"]?.bool == true { return false }
+        if let epoch = r["epoch"]?.string, epoch != seqEpoch { return false }
+        let events = (r["events"]?.array ?? []).map(GatewayEvent.init(params:)) + (held ?? [])
+        held = nil
+        for e in events.sorted(by: { ($0.seq ?? 0) < ($1.seq ?? 0) }) { handle(e) }
+        // The ring can't carry a question still waiting for an answer, so they come separately.
+        for q in r["open_requests"]?.array ?? [] {
+            receive(ServerRequest(rpcId: q["id"] ?? .null, method: q["method"]?.string ?? "", params: q["params"] ?? .null))
+        }
+        return true
     }
 
     /// Frees the server-side agent for the chat we are leaving, unless it is still working.
