@@ -210,6 +210,9 @@ struct BotChatsSheet: View {
                 }
                 .listRowBackground(Theme.sidebar)
                 Section("Other chats") {
+                    if store.sessionsLoaded, store.sessions.isEmpty {
+                        Text("None yet").foregroundStyle(Theme.muted)
+                    }
                     ForEach(store.sessions) { s in
                         row(s.title.nonEmpty ?? "Untitled", subtitle: s.preview, id: s.id, icon: nil)
                             .swipeActions {
