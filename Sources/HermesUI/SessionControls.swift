@@ -25,6 +25,8 @@ struct ControlsRow: View {
             ApprovalsMenu(store: store)
         }
         .font(.caption)
+        // The pills share one line; above the default size they truncate to "...".
+        .dynamicTypeSize(...DynamicTypeSize.large)
         .padding(.horizontal, 10)
         .padding(.top, 6)
         .disabled(store.gateway.status != .online)

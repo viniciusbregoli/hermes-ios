@@ -11,6 +11,7 @@ public struct RootView: View {
     @State private var jump: String?
     @AppStorage("theme") private var themeId = Palette.nous.id
     @AppStorage("appearance") private var appearance = Appearance.system
+    @AppStorage("showTouches") private var showTouches = false
     @Environment(\.scenePhase) private var scenePhase
 
     public init() {
@@ -66,6 +67,9 @@ public struct RootView: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active { store.gateway.start() }
         }
+        #if os(iOS)
+        .onChange(of: showTouches, initial: true) { _, on in TouchIndicator.shared.setEnabled(on) }
+        #endif
     }
 }
 
@@ -312,6 +316,8 @@ struct SettingsView: View {
     @Binding var themeId: String
     @Binding var appearance: Appearance
     var openChat: (String) -> Void = { _ in }
+    @AppStorage(ChatTextSize.key) private var textSize = ChatTextSize.standard
+    @AppStorage("showTouches") private var showTouches = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -338,6 +344,22 @@ struct SettingsView: View {
                     .disabled(Palette.named(themeId).light == nil)
                 }
                 .listRowBackground(Theme.sidebar)
+                Section("Chat text size") {
+                    HStack(spacing: 10) {
+                        Text("A").font(.caption)
+                        Slider(value: Binding(get: { Double(textSize) }, set: { textSize = ChatTextSize.clamped(Int($0.rounded())) }),
+                               in: 0...Double(ChatTextSize.sizes.count - 1), step: 1)
+                            .accessibilityLabel("Chat text size")
+                            .accessibilityValue(ChatTextSize.label(textSize))
+                        Text("A").font(.title2)
+                    }
+                    HStack {
+                        Text("The quick brown fox").font(.body).dynamicTypeSize(ChatTextSize.size(textSize))
+                        Spacer()
+                        Text(ChatTextSize.label(textSize)).font(.caption).foregroundStyle(Theme.muted)
+                    }
+                }
+                .listRowBackground(Theme.sidebar)
                 SubagentSettingsSection(gateway: gateway)
                 ReadAloudSettingsSection()
                 Section {
@@ -347,6 +369,14 @@ struct SettingsView: View {
                     NavigationLink { ArtifactsView(gateway: gateway, openChat: openChat) } label: {
                         Label("Artifacts", systemImage: "photo.on.rectangle.angled")
                     }
+                }
+                .listRowBackground(Theme.sidebar)
+                Section {
+                    Toggle("Show touches", isOn: $showTouches)
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text("Draws a dot wherever you touch, so screen recordings show your taps.")
                 }
                 .listRowBackground(Theme.sidebar)
                 Section("Gateway") {

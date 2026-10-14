@@ -10,12 +10,14 @@ import HermesKit
 struct ActivityGroupView: View {
     let group: ActivityGroup
     @Binding var open: Bool
+    // Scales with the chat text size so a large icon doesn't run into its label.
+    @ScaledMetric(relativeTo: .footnote) private var iconWidth: CGFloat = 18
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let thought = group.thought, group.live, !open {
                 HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "brain").frame(width: 18)
+                    Image(systemName: "brain").frame(width: iconWidth)
                     Text(thought).lineLimit(4)
                 }
                 .font(.footnote)
@@ -25,7 +27,7 @@ struct ActivityGroupView: View {
                 HStack(spacing: 6) {
                     Image(systemName: group.failed ? "exclamationmark.triangle" : group.icon)
                         .foregroundStyle(group.failed ? Theme.destructive : Theme.muted)
-                        .frame(width: 18)
+                        .frame(width: iconWidth)
                     Text(group.title)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -88,6 +90,7 @@ struct EntryRow: View {
 struct ToolRow: View {
     let tool: ToolCall
     @State private var open = false
+    @ScaledMetric(relativeTo: .footnote) private var iconWidth: CGFloat = 16
 
     var body: some View {
         let failed = Timeline.failed(tool)
@@ -96,7 +99,7 @@ struct ToolRow: View {
                 HStack(spacing: 6) {
                     Image(systemName: failed ? "exclamationmark.triangle" : Timeline.action(tool).icon)
                         .foregroundStyle(failed ? Theme.destructive : Theme.muted)
-                        .frame(width: 16)
+                        .frame(width: iconWidth)
                     Text(Timeline.label(tool, present: tool.running)).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 4)
                     if tool.running {
