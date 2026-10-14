@@ -53,16 +53,22 @@ struct BotsView: View {
 struct BotRow: View {
     let bot: Bot
     let bots: BotStore
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        let stacked = typeSize.isAccessibilitySize
         HStack(spacing: 12) {
             BotAvatar(bot: bot, bots: bots, size: 40)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
-                    if bots.unread[bot.name] != nil { UnreadDot() }
-                    Text(bot.label).font(.subheadline.weight(.medium)).lineLimit(1)
+                // Accessibility sizes stack the name, status and time, so the name keeps its width.
+                let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+                layout {
+                    HStack(alignment: .firstTextBaseline) {
+                        if bots.unread[bot.name] != nil { UnreadDot() }
+                        Text(bot.label).font(.subheadline.weight(.medium)).lineLimit(stacked ? 3 : 1)
+                    }
                     BotActivity(bot: bot, bots: bots)
-                    Spacer()
+                    if !stacked { Spacer() }
                     if let last = bot.lastActive {
                         Text(last, format: .relative(presentation: .numeric, unitsStyle: .narrow))
                             .font(.caption2)
@@ -148,7 +154,7 @@ struct BotChatScreen: View {
 
     var body: some View {
         let bot = bots.bot(named: name)
-        ChatView(store: store, bots: bots)
+        ChatView(store: store, bots: bots, avatar: BotAvatar(bot: bot, bots: bots, fallbackName: name, size: 24))
             .overlay {
                 if let error = store.botChatError {
                     ContentUnavailableView {
@@ -163,12 +169,6 @@ struct BotChatScreen: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 6) {
-                        BotAvatar(bot: bot, bots: bots, fallbackName: name, size: 24)
-                        Text(store.title).font(.headline).lineLimit(1)
-                    }
-                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showChats = true } label: { Image(systemName: "list.bullet") }
                         .keyboardShortcut("l", modifiers: .command)
