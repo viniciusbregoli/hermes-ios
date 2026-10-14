@@ -173,12 +173,9 @@ public final class ChatStore {
         defer { loading = false }
         do {
             // session.history needs a live session, so the stored transcript comes from the dashboard's REST read.
-            guard let c = gateway.credentials else { throw GatewayError.offline }
-            var comps = URLComponents(url: c.baseURL.appending(path: "api/sessions/\(storedId)/messages"), resolvingAgainstBaseURL: false)!
-            comps.queryItems = [.init(name: "inline_images", value: "false")] + (profile.map { [.init(name: "profile", value: $0)] } ?? [])
-            var r = URLRequest(url: comps.url!)
-            r.setValue("Bearer \(c.accessToken)", forHTTPHeaderField: "Authorization")
-            let messages = try await DelegationValues.send(r)["messages"]?.array ?? []
+            var query = ["inline_images": "false"]
+            if let profile { query["profile"] = profile }
+            let messages = try await gateway.rest("GET", "api/sessions/\(storedId)/messages", query: query)["messages"]?.array ?? []
             items = messages.compactMap { m in
                 // REST rows name their tool `tool_name`; the gateway's transcript calls it `name`.
                 guard var o = m.object else { return nil }

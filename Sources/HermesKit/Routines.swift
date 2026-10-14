@@ -348,17 +348,7 @@ public final class RoutineStore {
         return r
     }
 
-    private func rest(_ method: String, _ path: String, body: JSON? = nil, timeout: TimeInterval = 60) async throws -> JSON {
-        guard let c = gateway.credentials else { throw GatewayError.offline }
-        var comps = URLComponents(url: c.baseURL.appending(path: "api/cron/\(path)"), resolvingAgainstBaseURL: false)!
-        if let profile { comps.queryItems = [.init(name: "profile", value: profile)] }
-        var r = URLRequest(url: comps.url!, timeoutInterval: timeout)
-        r.httpMethod = method
-        r.setValue("Bearer \(c.accessToken)", forHTTPHeaderField: "Authorization")
-        if let body {
-            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            r.httpBody = try body.data()
-        }
-        return try await DelegationValues.send(r)
+    private func rest(_ method: String, _ path: String, body: [String: JSON]? = nil, timeout: TimeInterval = 60) async throws -> JSON {
+        try await gateway.rest(method, "api/cron/\(path)", query: profile.map { ["profile": $0] } ?? [:], body: body, timeout: timeout)
     }
 }
