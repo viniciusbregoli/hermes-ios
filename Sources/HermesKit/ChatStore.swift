@@ -68,7 +68,9 @@ public final class ChatStore {
     public private(set) var sessionsLoaded = false
     /// Stored id of the open chat; nil means a new, unsent chat.
     public private(set) var selectedId: String?
-    public private(set) var runtimeId: String?
+    public private(set) var runtimeId: String? {
+        didSet { if runtimeId != oldValue { lastSeq = 0 } }
+    }
     /// Stored id of the profile's "Bot Chat" once `openBotChat` found or made it.
     public private(set) var canonicalId: String?
     /// Shown as the Bot Chat's title instead of its stored one.
@@ -100,9 +102,10 @@ public final class ChatStore {
     public var onScreen = false { didSet { markRead() } }
     public var appActive = true { didSet { markRead() } }
     public var visible: Bool { onScreen && appActive }
-    /// Chats whose turn finished while they were off screen.
-    // ponytail: in memory only, so dots clear on relaunch; persist the set if that matters.
-    public internal(set) var unread: Set<String> = []
+    /// Chats whose turn finished while they were off screen, with when; kept across launches.
+    public internal(set) var unread: [String: Date] = [:] {
+        didSet { if profile == nil, unread != oldValue { defaults.set(unread, forKey: Self.unreadKey) } }
+    }
     /// Called when a turn finishes while the chat is off screen, with the chat title and the reply.
     @ObservationIgnored public var onTurnFinished: ((_ title: String, _ reply: String) -> Void)?
 
@@ -130,11 +133,24 @@ public final class ChatStore {
     /// Durable row ids of live user messages (from prompt.submit), and history rows a rewind renumbered;
     /// nil means the row is gone. Transcript rows carry theirs in the item id. See `rowId(of:)`.
     var rowIds: [String: Int?] = [:]
-    @ObservationIgnored private var nextLocalId = 0
+    /// Highest event seq handled for `runtimeId`, and the gateway epoch it counts in.
+    @ObservationIgnored var lastSeq = 0
+    @ObservationIgnored var seqEpoch: String?
+    /// The open chat's live events, parked while a reconnect replay is in flight so they run after the gap.
+    @ObservationIgnored var held: [GatewayEvent]?
+    /// Where a turn this app didn't send begins in `items`, until the row that opened it is shown.
+    @ObservationIgnored var openerAt: Int?
 
-    public init(gateway: Gateway, profile: String? = nil) {
+    @ObservationIgnored private var nextLocalId = 0
+    @ObservationIgnored private let defaults: UserDefaults
+    static let unreadKey = "chats.unread"
+
+    public init(gateway: Gateway, profile: String? = nil, defaults: UserDefaults = .standard) {
         self.gateway = gateway
         self.profile = profile
+        self.defaults = defaults
+        // Only the Chats list shows dots; a bot's chats would overwrite its marks with their empty ones.
+        if profile == nil { unread = defaults.dictionary(forKey: Self.unreadKey) as? [String: Date] ?? [:] }
         gateway.listen(self, event: { [weak self] in self?.handle($0) },
                        request: { [weak self] in self?.claim($0) ?? false },
                        connected: { [weak self] in self?.reconnected() })
@@ -150,14 +166,20 @@ public final class ChatStore {
     // MARK: - Actions
 
     private func markRead() {
-        if visible, let id = selectedId { unread.remove(id) }
+        if visible, let id = selectedId { unread[id] = nil }
     }
 
     public func refreshSessions() async {
         guard let r = try? await gateway.call("session.list", scoped(["limit": 200])) else { return }
+        applySessions(r)
+        await refreshPins()
+    }
+
+    func applySessions(_ r: JSON) {
         sessionsLoaded = true
         sessions = SessionRow.parse(r["sessions"])
-        await refreshPins()
+        let listed = Set(sessions.map(\.id))
+        unread = unread.filter { listed.contains($0.key) }
     }
 
     public func open(_ storedId: String?) async {
@@ -201,10 +223,11 @@ public final class ChatStore {
             turnStartedAt = nil
             turnEnds = [:]
             rowIds = [:]
+            openerAt = nil
             resetControls()
         }
         guard let storedId else { return }
-        unread.remove(storedId)
+        unread[storedId] = nil
         loading = true
         defer { loading = false }
         let snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
@@ -404,6 +427,15 @@ public final class ChatStore {
     // MARK: - Events
 
     private func handle(_ e: GatewayEvent) {
+        if e.sessionId == runtimeId, let seq = e.seq {
+            if held != nil { held?.append(e); return }
+            // Replayed and live copies of one event share a seq; the second is a duplicate.
+            guard seq > lastSeq else { return }
+            lastSeq = seq
+            seqEpoch = gateway.replayEpoch
+        }
+        // Started while idle with nothing queued: a bot delivery or another server-side turn.
+        let external = e.type == "message.start" && e.sessionId == runtimeId && !running && queued.isEmpty
         let p = e.payload
         if e.sessionId == runtimeId { handleControls(e.type, p) }
         if e.sessionId.isEmpty {
@@ -419,6 +451,10 @@ public final class ChatStore {
             running = true
             statusText = nil
             if turnStartedAt == nil { turnStartedAt = Date() }
+            if external {
+                openerAt = items.count
+                Task { await showOpener(final: false) }
+            }
         case "message.delta":
             appendAssistant(text: p["text"]?.string ?? "")
         case "reasoning.delta":
@@ -488,18 +524,54 @@ public final class ChatStore {
         if let start = items.last(where: { $0.kind == .user || $0.kind == .agent }) {
             turnEnds[start.id] = TurnEnd(at: Date(), stopped: status == "interrupted")
         }
+        if openerAt != nil { Task { await showOpener(final: true) } }
         running = false
         statusText = nil
         turnStartedAt = nil
         if status != "error" { finishedTurns += 1 }
         if !visible {
-            if let id = selectedId, profile == nil { unread.insert(id) }
+            if let id = selectedId, profile == nil { unread[id] = Date() }
             let reply = items.last { $0.kind == .assistant }?.text ?? ""
             onTurnFinished?(title, status == "error" ? "The turn failed." : reply.nonEmpty ?? "Finished.")
         }
         if selectedId == nil || (selectedId != canonicalId && !sessions.contains(where: { $0.id == selectedId })) {
             Task { await refreshSessions() }
         }
+    }
+
+    /// The server streams the reply to a turn it started (a bot delivery runs on the user role) but not
+    /// the message that opened it, so read it from the transcript. Tried at the start and, in case the row
+    /// wasn't written yet, again at the end.
+    private func showOpener(final: Bool) async {
+        guard let sid = runtimeId,
+              let r = try? await gateway.call("session.history", ["session_id": .string(sid)]),
+              runtimeId == sid else { return }
+        placeOpener(from: r["messages"]?.array ?? [], final: final)
+    }
+
+    func placeOpener(from messages: [JSON], final: Bool) {
+        guard let at = openerAt.map({ min($0, items.count) }) else { return }
+        guard let item = missingOpener(in: messages, before: at) else {
+            if final { openerAt = nil }
+            return
+        }
+        // A turn that already ended filed its end under the previous turn's opener.
+        if !running, let previous = items[..<at].last(where: { $0.kind == .user || $0.kind == .agent }),
+           let end = turnEnds.removeValue(forKey: previous.id) {
+            turnEnds[item.id] = end
+        }
+        items.insert(item, at: at)
+        openerAt = nil
+    }
+
+    /// The transcript's last user-role row, unless the chat already shows it: by row id, or as the
+    /// message this app sent just before `index`.
+    func missingOpener(in messages: [JSON], before index: Int) -> ChatItem? {
+        guard let row = messages.last(where: { $0["role"]?.string == "user" }), let rowId = row["row_id"]?.int,
+              !items.contains(where: { self.rowId(of: $0) == rowId }), let item = item(from: row) else { return nil }
+        let shown = items.prefix(index).last { $0.kind == .user || $0.kind == .agent }
+        if let shown, shown.id.hasPrefix("local-"), shown.text == item.text { return nil }
+        return item
     }
 
     private func appendAssistant(text: String = "", reasoning: String = "") {
@@ -523,6 +595,7 @@ public final class ChatStore {
         running = s["running"]?.bool ?? false
         turnStartedAt = running ? (s["turn_started_at"] ?? s["info"]?["turn_started_at"])?.double.map(Date.init(timeIntervalSince1970:)) : nil
         items = (s["messages"]?.array ?? []).compactMap(item(from:))
+        openerAt = nil
         for r in s["open_requests"]?.array ?? [] {
             receive(ServerRequest(rpcId: r["id"] ?? .null, method: r["method"]?.string ?? "", params: r["params"] ?? .null))
         }
@@ -578,15 +651,51 @@ public final class ChatStore {
     // MARK: - Lifecycle
 
     private func reconnected() {
+        let replay = Self.canReplay(runtimeId: runtimeId, lastSeq: lastSeq, seenEpoch: seqEpoch, epoch: gateway.replayEpoch)
+        // Park from the start: nothing for this session may advance the watermark ahead of the gap.
+        if replay { held = [] }
         Task {
             await refreshSessions()
-            // ponytail: re-resume reloads the whole transcript; session.events.since would replay
-            // only the missed deltas if reconnects mid-stream become common.
-            if let id = selectedId, !readOnly {
-                runtimeId = nil
-                await open(id)
-            }
+            guard let id = selectedId, !readOnly else { held = nil; return }
+            if replay, await replayMissed() { return }
+            held = nil
+            runtimeId = nil
+            await open(id)
         }
+    }
+
+    /// Whether a reconnect can replay the open chat's missed events instead of reloading it: the chat
+    /// has a live session that saw events, and the server process (its seq numbering) is the same one.
+    static func canReplay(runtimeId: String?, lastSeq: Int, seenEpoch: String?, epoch: String?) -> Bool {
+        runtimeId != nil && lastSeq > 0 && seenEpoch != nil && seenEpoch == epoch
+    }
+
+    /// Rebinds the open chat's live session to the new socket, then runs only the events it missed.
+    private func replayMissed() async -> Bool {
+        guard let sid = runtimeId else { return false }
+        do {
+            // Until rebound, the server sends this session's events nowhere.
+            _ = try await gateway.call("session.activate", ["session_id": .string(sid), "omit_messages": true])
+            let r = try await gateway.call("session.events.since", ["session_id": .string(sid), "last_seen": .number(Double(lastSeq))])
+            return runtimeId == sid && applyReplay(r)
+        } catch {
+            return false
+        }
+    }
+
+    /// Folds a `session.events.since` answer and the live events parked meanwhile, in seq order.
+    /// False when the replay has a hole (window passed, server restarted) and the chat must reload.
+    func applyReplay(_ r: JSON) -> Bool {
+        if r["truncated"]?.bool == true { return false }
+        if let epoch = r["epoch"]?.string, epoch != seqEpoch { return false }
+        let events = (r["events"]?.array ?? []).map(GatewayEvent.init(params:)) + (held ?? [])
+        held = nil
+        for e in events.sorted(by: { ($0.seq ?? 0) < ($1.seq ?? 0) }) { handle(e) }
+        // The ring can't carry a question still waiting for an answer, so they come separately.
+        for q in r["open_requests"]?.array ?? [] {
+            receive(ServerRequest(rpcId: q["id"] ?? .null, method: q["method"]?.string ?? "", params: q["params"] ?? .null))
+        }
+        return true
     }
 
     /// Frees the server-side agent for the chat we are leaving, unless it is still working.

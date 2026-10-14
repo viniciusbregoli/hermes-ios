@@ -58,7 +58,7 @@ struct BotRow: View {
             BotAvatar(bot: bot, bots: bots, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
-                    if bots.unread.contains(bot.name) { UnreadDot() }
+                    if bots.unread[bot.name] != nil { UnreadDot() }
                     Text(bot.label).font(.subheadline.weight(.medium)).lineLimit(1)
                     BotActivity(bot: bot, bots: bots)
                     Spacer()

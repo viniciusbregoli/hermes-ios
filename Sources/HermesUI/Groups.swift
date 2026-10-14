@@ -237,6 +237,8 @@ struct CreateGroupSheet: View {
                     } else {
                         Button("Create") { Task { await create() } }
                             .disabled(!valid)
+                            // The glass toolbar doesn't dim a disabled button's label, so it looked tappable.
+                            .foregroundStyle(valid ? Theme.foreground : Theme.muted)
                             .keyboardShortcut(.return, modifiers: .command)
                             .help("Create (⌘↩)")
                     }

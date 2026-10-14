@@ -117,4 +117,36 @@ struct BotHistoryTests {
         #expect(store.items[0].agent?.handle == "inbox" && store.items[0].text == "invoice arrived")
         #expect(store.items[1].text == "ask @inbox")
     }
+
+    @Test func liveDeliveryShowsTheMessageThatOpenedIt() {
+        let gateway = Gateway(credentials: nil)
+        let store = ChatStore(gateway: gateway, profile: "research")
+        let history: [JSON] = [["role": "user", "text": "hi", "row_id": 1], ["role": "assistant", "text": "hello", "row_id": 2]]
+        store.apply(snapshot: ["session_id": "rt", "messages": .array(history)])
+        func emit(_ type: String, _ payload: JSON = nil) { gateway.dispatch(GatewayEvent(type: type, sessionId: "rt", payload: payload)) }
+
+        emit("message.start")
+        emit("message.delta", ["text": "On it."])
+        // Not written yet when the turn starts: nothing to add, and the later try still runs.
+        store.placeOpener(from: history, final: false)
+        #expect(store.items.map(\.kind) == [.user, .assistant, .assistant])
+        #expect(store.openerAt == 2)
+
+        emit("message.complete", ["text": "On it.", "status": "complete"])
+        let delivered = history + [["role": "user", "text": "Message from 🤖 Hermes (@hermes): ping", "row_id": 3],
+                                   ["role": "assistant", "text": "On it.", "row_id": 4]]
+        store.placeOpener(from: delivered, final: true)
+        #expect(store.items.map(\.kind) == [.user, .assistant, .agent, .assistant])
+        #expect(store.items[2].id == "row-3" && store.items[2].agent?.handle == "hermes")
+        #expect(store.turnEnds["row-3"] != nil && store.turnEnds["row-1"] == nil)
+        #expect(store.openerAt == nil)
+
+        // Shown already: by row id, or as the message this app just sent.
+        #expect(store.missingOpener(in: delivered, before: 3) == nil)
+        emit("message.start")
+        #expect(store.openerAt == 4)
+        store.openerAt = nil
+        store.items.append(ChatItem(id: "local-9", kind: .user, text: "thanks"))
+        #expect(store.missingOpener(in: delivered + [["role": "user", "text": "thanks", "row_id": 5]], before: 5) == nil)
+    }
 }

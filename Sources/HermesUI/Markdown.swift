@@ -105,7 +105,9 @@ struct BlockView: View {
     static func styled(_ text: AttributedString) -> AttributedString {
         var text = text
         for run in text.runs where run.inlinePresentationIntent?.contains(.code) == true {
-            text[run.range].backgroundColor = Theme.sidebar
+            // A tint of the text color reads on every palette and inside bubbles; Matrix's sidebar is
+            // almost its background.
+            text[run.range].backgroundColor = Theme.foreground.opacity(0.14)
         }
         return text
     }
@@ -139,6 +141,7 @@ struct CodeBlock: View {
     let code: String
     let language: String?
     @State private var copied = false
+    @State private var resetCopied: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -148,7 +151,11 @@ struct CodeBlock: View {
                 Button {
                     Clipboard.copy(code)
                     copied = true
-                    Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+                    resetCopied?.cancel()
+                    resetCopied = Task {
+                        do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
+                        copied = false
+                    }
                 } label: {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc").font(.caption)
                 }
@@ -480,6 +487,7 @@ enum ImageExport {
 struct ImageActionsBar: View {
     let image: UIImage
     @State private var note: String?
+    @State private var hideNote: Task<Void, Never>?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -512,23 +520,38 @@ struct ImageActionsBar: View {
     private func show(_ failure: String?, success: String) {
         withAnimation { note = failure ?? success }
         UINotificationFeedbackGenerator().notificationOccurred(failure == nil ? .success : .error)
-        Task {
-            try? await Task.sleep(for: .seconds(failure == nil ? 1.5 : 4))
+        // A newer note restarts the clock instead of being cleared by the older one's.
+        hideNote?.cancel()
+        hideNote = Task {
+            do { try await Task.sleep(for: .seconds(failure == nil ? 1.5 : 4)) } catch { return }
             withAnimation { note = nil }
         }
     }
 }
 
-extension View {
-    /// Long-press Copy Image / Save to Photos on an inline image.
-    func imageContextMenu(_ image: UIImage) -> some View {
-        contextMenu {
-            Button { ImageExport.copy(image) } label: { Label("Copy Image", systemImage: "doc.on.doc") }
-            Button { Task { _ = await ImageExport.saveToPhotos(image) } } label: {
-                Label("Save to Photos", systemImage: "square.and.arrow.down")
+/// Long-press Copy Image / Save to Photos on an inline image.
+struct ImageContextMenu: ViewModifier {
+    let image: UIImage
+    @State private var error: String?
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu {
+                Button { ImageExport.copy(image) } label: { Label("Copy Image", systemImage: "doc.on.doc") }
+                Button { Task { error = await ImageExport.saveToPhotos(image) } } label: {
+                    Label("Save to Photos", systemImage: "square.and.arrow.down")
+                }
             }
-        }
+            .alert("Couldn't save the image", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(error ?? "")
+            }
     }
+}
+
+extension View {
+    func imageContextMenu(_ image: UIImage) -> some View { modifier(ImageContextMenu(image: image)) }
 }
 #endif
 

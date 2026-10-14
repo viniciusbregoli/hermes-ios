@@ -171,7 +171,7 @@ struct TurnTrackingTests {
 
     @Test func finishedTurnRecordsItsEndAndUnread() {
         let gateway = Gateway(credentials: nil)
-        let store = ChatStore(gateway: gateway)
+        let store = ChatStore(gateway: gateway, defaults: UserDefaults(suiteName: #function)!)
         store.apply(snapshot: ["session_id": "rt", "info": ["stored_session_id": "s1"],
                                "messages": [["role": "user", "text": "hi", "row_id": 1]]])
         var finished: [String] = []
@@ -181,7 +181,7 @@ struct TurnTrackingTests {
         gateway.dispatch(GatewayEvent(type: "message.complete", sessionId: "rt", payload: ["text": "yo", "status": "interrupted"]))
         #expect(store.turnEnds["row-1"]?.stopped == true)
         #expect(store.turnStartedAt == nil && store.finishedTurns == 1)
-        #expect(store.unread == ["s1"] && finished == ["yo"])
+        #expect(Set(store.unread.keys) == ["s1"] && finished == ["yo"])
         store.onScreen = true
         #expect(store.unread.isEmpty)
     }

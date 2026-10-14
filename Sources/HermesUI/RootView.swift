@@ -210,7 +210,7 @@ struct MainView: View {
 
     private func rows(_ sessions: [SessionRow]) -> some View {
         ForEach(sessions) { s in
-            SessionRowView(session: s, unread: store.unread.contains(s.id)).tag(s.id)
+            SessionRowView(session: s, unread: store.unread[s.id] != nil).tag(s.id)
                 .listRowBackground(Theme.sidebar)
                 .sessionActions(store, s, renaming: $renaming)
         }
