@@ -132,6 +132,7 @@ struct ChatView: View {
             if !store.readOnly {
                 VStack(spacing: 0) {
                     TodosPanel(store: store)
+                    ControlCards(store: store)
                     ForEach(store.requests) { r in
                         RequestCard(request: r) { store.answer(r, result: $0) }
                     }
