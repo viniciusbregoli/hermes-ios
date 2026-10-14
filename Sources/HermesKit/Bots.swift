@@ -92,6 +92,15 @@ public final class BotStore {
     public private(set) var avatars: [String: Data] = [:]
     /// Bots with a turn running in a chat this app has open.
     public private(set) var thinking: Set<String> = []
+    /// Bots whose turn finished while their chat was off screen.
+    // ponytail: in memory only, like ChatStore.unread.
+    public private(set) var unread: Set<String> = []
+    /// The bot whose chat is on screen with the app active; set by the chat view.
+    public var visibleBot: String? {
+        didSet { if let visibleBot { unread.remove(visibleBot) } }
+    }
+    /// Called when a bot's turn finishes while its chat is off screen, with the bot name and the reply.
+    @ObservationIgnored public var onTurnFinished: ((_ bot: String, _ reply: String) -> Void)?
 
     @ObservationIgnored private var runtimes: [String: String] = [:]
     @ObservationIgnored private var avatarRequests: Set<String> = []
@@ -210,7 +219,13 @@ public final class BotStore {
         case "message.start":
             if let bot = runtimes[e.sessionId] { thinking.insert(bot) }
         case "message.complete":
-            if let bot = runtimes[e.sessionId] { thinking.remove(bot) }
+            guard let bot = runtimes[e.sessionId] else { return }
+            thinking.remove(bot)
+            if bot != visibleBot {
+                unread.insert(bot)
+                let failed = e.payload["status"]?.string == "error"
+                onTurnFinished?(bot, failed ? "The turn failed." : e.payload["text"]?.string?.nonEmpty ?? "Finished.")
+            }
         default:
             break
         }

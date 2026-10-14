@@ -177,7 +177,12 @@ extension ChatStore {
         case "message.start":
             retryText = nil
             // The server runs queued messages in order, one turn each.
-            if !queued.isEmpty { items.append(queued.removeFirst()) }
+            if !queued.isEmpty {
+                var next = queued.removeFirst()
+                next.date = Date()
+                items.append(next)
+                turnStartedAt = Date()
+            }
         case "todo.updated", "tool.complete":
             applyTodos(p["todos"], revision: p["revision"]?.int)
         case "session.usage":
