@@ -10,7 +10,7 @@ public final class GroupStore {
     public private(set) var error: String?
     public private(set) var marks: [String: RoomMark]
 
-    @ObservationIgnored private var stores: [String: RoomStore] = [:]
+    @ObservationIgnored private(set) var stores: [String: RoomStore] = [:]
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var refreshing = false
 

@@ -109,7 +109,7 @@ public final class BotStore {
     /// Called when a bot's turn finishes while its chat is off screen, with the bot name and the reply.
     @ObservationIgnored public var onTurnFinished: ((_ bot: String, _ reply: String) -> Void)?
 
-    @ObservationIgnored private var runtimes: [String: String] = [:]
+    @ObservationIgnored private(set) var runtimes: [String: String] = [:]
     @ObservationIgnored private var avatarRequests: Set<String> = []
     @ObservationIgnored private var lastRefresh = Date.distantPast
     @ObservationIgnored private var refreshing = false
