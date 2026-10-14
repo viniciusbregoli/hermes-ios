@@ -569,16 +569,16 @@ struct RequestCard: View {
                 .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
             }
             HStack {
-                Button { answer(["choice": "once"]) } label: { Text("Run").foregroundStyle(Theme.onPrimary) }
-                    .buttonStyle(.borderedProminent)
+                Button("Run") { answer(["choice": "once"]) }
+                    .buttonStyle(.prominent)
                 if choices.contains("session") || choices.contains("always") {
-                    Menu("More") {
+                    Menu {
                         if choices.contains("session") { Button("Allow for this session") { answer(["choice": "session"]) } }
                         if choices.contains("always") { Button("Always allow") { answer(["choice": "always"]) } }
-                    }
+                    } label: { Text("More").tapTarget() }
                 }
                 Spacer()
-                Button("Reject", role: .destructive) { answer(["choice": "deny"]) }
+                Button(role: .destructive) { answer(["choice": "deny"]) } label: { Text("Reject").tapTarget() }
                     .keyboardShortcut(.cancelAction)
             }
         }
@@ -604,10 +604,10 @@ struct RequestCard: View {
                 Button("Answer") {
                     answer(["answers": .object(answers.mapValues { .string($0) })])
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.prominent)
                 .disabled(answers.isEmpty)
                 Spacer()
-                Button("Skip") { answer([:]) }.keyboardShortcut(.cancelAction)
+                Button { answer([:]) } label: { Text("Skip").tapTarget() }.keyboardShortcut(.cancelAction)
             }
         }
     }
@@ -623,10 +623,10 @@ struct RequestCard: View {
                 .onSubmit { answer(["value": .string(text)]) }
             HStack {
                 Button("Submit") { answer(["value": .string(text)]) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.prominent)
                     .disabled(text.isEmpty)
                 Spacer()
-                Button("Decline") { answer(["value": ""]) }.keyboardShortcut(.cancelAction)
+                Button { answer(["value": ""]) } label: { Text("Decline").tapTarget() }.keyboardShortcut(.cancelAction)
             }
         }
     }
@@ -642,9 +642,9 @@ struct FlowChoices: View {
             HStack {
                 ForEach(choices, id: \.self) { c in
                     if c == selected {
-                        Button(c) { pick(c) }.buttonStyle(.borderedProminent)
+                        Button(c) { pick(c) }.buttonStyle(.prominent)
                     } else {
-                        Button(c) { pick(c) }.buttonStyle(.bordered)
+                        Button(c) { pick(c) }.buttonStyle(.secondary)
                     }
                 }
             }

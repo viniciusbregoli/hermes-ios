@@ -143,33 +143,32 @@ struct ActivityView: View {
         case .needsYou(.request(let r)) where r.method == "approval":
             let choices = r.params["choices"]?.array?.compactMap(\.string) ?? ["once", "deny"]
             HStack {
-                Button { activity.answer(r, result: ["choice": "once"]) } label: { Text("Once").foregroundStyle(Theme.onPrimary) }
-                    .buttonStyle(.borderedProminent)
-                if choices.contains("session") {
-                    Button("Session") { activity.answer(r, result: ["choice": "session"]) }.buttonStyle(.bordered)
-                }
+                Button("Once") { activity.answer(r, result: ["choice": "once"]) }
+                    .buttonStyle(.prominent)
                 Spacer()
-                Button("Deny", role: .destructive) { activity.answer(r, result: ["choice": "deny"]) }.buttonStyle(.bordered)
+                // A session-wide approval sits behind a menu so a stray tap near Once can't grant it.
+                if choices.contains("session") {
+                    Menu {
+                        Button("Allow for this session") { activity.answer(r, result: ["choice": "session"]) }
+                    } label: { Text("More").tapTarget() }
+                }
+                Button("Deny", role: .destructive) { activity.answer(r, result: ["choice": "deny"]) }.buttonStyle(.secondary)
             }
-            .controlSize(.large)
         case .needsYou(.request(let r)):
-            Button("Answer…") { answering = r }.buttonStyle(.bordered).controlSize(.large)
+            Button("Answer…") { answering = r }.buttonStyle(.secondary)
         case .needsYou(.room(let action)):
             if case .room(let room) = item.target {
                 HStack {
                     if action.kind == .retry {
-                        Button("Retry") { Task { await activity.retry(action, in: room) } }.buttonStyle(.bordered)
+                        Button("Retry") { Task { await activity.retry(action, in: room) } }.buttonStyle(.secondary)
                     } else {
-                        Button { Task { await activity.approve(action, in: room, choice: "once") } } label: {
-                            Text("Once").foregroundStyle(Theme.onPrimary)
-                        }
-                        .buttonStyle(.borderedProminent)
+                        Button("Once") { Task { await activity.approve(action, in: room, choice: "once") } }
+                            .buttonStyle(.prominent)
                         Spacer()
                         Button("Deny", role: .destructive) { Task { await activity.approve(action, in: room, choice: "deny") } }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.secondary)
                     }
                 }
-                .controlSize(.large)
             }
         case .background(.process):
             let open = expanded.contains(item.id)

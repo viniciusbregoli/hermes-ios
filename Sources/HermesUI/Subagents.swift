@@ -248,8 +248,8 @@ struct SubagentDetail: View {
                     .lineLimit(1...4)
                     .focused($steerFocused)
                     .onSubmit(sendSteer)
-                Button(action: sendSteer) { Text("Steer").foregroundStyle(Theme.onPrimary) }
-                    .buttonStyle(.borderedProminent)
+                Button("Steer", action: sendSteer)
+                    .buttonStyle(.prominent)
                     .disabled(busy || steer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !item.acceptingSteer)
                     .keyboardShortcut(.return, modifiers: .command)
             }
