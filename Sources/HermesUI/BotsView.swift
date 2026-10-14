@@ -296,6 +296,8 @@ struct AgentNotice: View {
 struct MentionPicker: View {
     let candidates: [Bot]
     let bots: BotStore
+    /// The handle a chip shows; a group room may have handed a bot a different one.
+    var handle: (Bot) -> String = { $0.handle }
     let pick: (Bot) -> Void
 
     var body: some View {
@@ -305,7 +307,7 @@ struct MentionPicker: View {
                     let chip = Button { pick(bot) } label: {
                         HStack(spacing: 6) {
                             BotAvatar(bot: bot, bots: bots, size: 20)
-                            Text("@\(bot.handle)").font(.callout)
+                            Text("@\(handle(bot))").font(.callout)
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -327,8 +329,10 @@ struct MentionPicker: View {
         return String(draft[r].drop { $0 != "@" }.dropFirst())
     }
 
-    static func complete(_ draft: String, with bot: Bot) -> String {
+    static func complete(_ draft: String, with bot: Bot) -> String { complete(draft, handle: bot.handle) }
+
+    static func complete(_ draft: String, handle: String) -> String {
         guard let q = query(draft) else { return draft }
-        return String(draft.dropLast(q.count + 1)) + "@\(bot.handle) "
+        return String(draft.dropLast(q.count + 1)) + "@\(handle) "
     }
 }

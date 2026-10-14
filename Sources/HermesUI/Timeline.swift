@@ -308,6 +308,8 @@ struct WorkingControls: View {
     let running: Bool
     let startedAt: Date?
     let showScrollToEnd: Bool
+    /// Replaces the "Working 12s" clock, e.g. with who is replying in a group.
+    var title: String? = nil
     let stop: () -> Void
     let scrollToEnd: () -> Void
     @Environment(\.scenePhase) private var scenePhase
@@ -361,6 +363,7 @@ struct WorkingControls: View {
     }
 
     private func label(at now: Date) -> String {
+        if let title { return title }
         guard let startedAt else { return "Working" }
         return "Working \(Timeline.clock(max(0, Int(now.timeIntervalSince(startedAt)))))"
     }
