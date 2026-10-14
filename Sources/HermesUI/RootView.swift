@@ -11,6 +11,7 @@ public struct RootView: View {
     @State private var jump: String?
     @AppStorage("theme") private var themeId = Palette.nous.id
     @AppStorage("appearance") private var appearance = Appearance.system
+    @AppStorage("showTouches") private var showTouches = false
     @Environment(\.scenePhase) private var scenePhase
 
     public init() {
@@ -66,6 +67,9 @@ public struct RootView: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active { store.gateway.start() }
         }
+        #if os(iOS)
+        .onChange(of: showTouches, initial: true) { _, on in TouchIndicator.shared.setEnabled(on) }
+        #endif
     }
 }
 
@@ -313,6 +317,7 @@ struct SettingsView: View {
     @Binding var appearance: Appearance
     var openChat: (String) -> Void = { _ in }
     @AppStorage(ChatTextSize.key) private var textSize = ChatTextSize.standard
+    @AppStorage("showTouches") private var showTouches = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -364,6 +369,14 @@ struct SettingsView: View {
                     NavigationLink { ArtifactsView(gateway: gateway, openChat: openChat) } label: {
                         Label("Artifacts", systemImage: "photo.on.rectangle.angled")
                     }
+                }
+                .listRowBackground(Theme.sidebar)
+                Section {
+                    Toggle("Show touches", isOn: $showTouches)
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text("Draws a dot wherever you touch, so screen recordings show your taps.")
                 }
                 .listRowBackground(Theme.sidebar)
                 Section("Gateway") {
