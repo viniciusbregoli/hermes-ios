@@ -239,7 +239,7 @@ struct MainView: View {
                         .help("Artifacts (⇧⌘A)")
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings")
                         .keyboardShortcut(",", modifiers: .command)
                 }
             }

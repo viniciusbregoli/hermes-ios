@@ -43,7 +43,7 @@ struct ActivityView: View {
             .navigationTitle("Activity")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings")
                 }
             }
             .background {
