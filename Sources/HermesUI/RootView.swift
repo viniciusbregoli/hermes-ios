@@ -312,6 +312,7 @@ struct SettingsView: View {
     @Binding var themeId: String
     @Binding var appearance: Appearance
     var openChat: (String) -> Void = { _ in }
+    @AppStorage(ChatTextSize.key) private var textSize = ChatTextSize.standard
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -336,6 +337,22 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.segmented)
                     .disabled(Palette.named(themeId).light == nil)
+                }
+                .listRowBackground(Theme.sidebar)
+                Section("Chat text size") {
+                    HStack(spacing: 10) {
+                        Text("A").font(.caption)
+                        Slider(value: Binding(get: { Double(textSize) }, set: { textSize = ChatTextSize.clamped(Int($0.rounded())) }),
+                               in: 0...Double(ChatTextSize.sizes.count - 1), step: 1)
+                            .accessibilityLabel("Chat text size")
+                            .accessibilityValue(ChatTextSize.label(textSize))
+                        Text("A").font(.title2)
+                    }
+                    HStack {
+                        Text("The quick brown fox").font(.body).dynamicTypeSize(ChatTextSize.size(textSize))
+                        Spacer()
+                        Text(ChatTextSize.label(textSize)).font(.caption).foregroundStyle(Theme.muted)
+                    }
                 }
                 .listRowBackground(Theme.sidebar)
                 SubagentSettingsSection(gateway: gateway)
