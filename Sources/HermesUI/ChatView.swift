@@ -230,6 +230,7 @@ struct ChatView: View {
     }
 
     private func actions(for item: ChatItem) -> [MessageAction] {
+        guard !store.readOnly else { return [] }
         var out: [MessageAction] = []
         if store.canEdit(item) {
             out.append(MessageAction(title: "Edit and resend", icon: "pencil") {
