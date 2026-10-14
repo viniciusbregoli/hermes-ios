@@ -142,7 +142,7 @@ struct BotChatScreen: View {
     init(bots: BotStore, name: String) {
         self.bots = bots
         self.name = name
-        _store = State(initialValue: ChatStore(gateway: bots.gateway, profile: name))
+        _store = State(initialValue: bots.chat(for: name))
     }
 
     var body: some View {

@@ -110,6 +110,8 @@ public final class BotStore {
     @ObservationIgnored public var onTurnFinished: ((_ bot: String, _ reply: String) -> Void)?
 
     @ObservationIgnored private(set) var runtimes: [String: String] = [:]
+    /// Bot chats opened this launch, kept so their prompts and /bg tasks reach the Activity tab after the screen closes.
+    @ObservationIgnored private(set) var chats: [String: ChatStore] = [:]
     @ObservationIgnored private var avatarRequests: Set<String> = []
     @ObservationIgnored private var lastRefresh = Date.distantPast
     @ObservationIgnored private var refreshing = false
@@ -132,6 +134,7 @@ public final class BotStore {
             bots = Bot.roster(try await gateway.call("profiles.list"))
             let listed = Set(bots.map(\.name))
             unread = unread.filter { listed.contains($0.key) }
+            chats = chats.filter { listed.contains($0.key) }
             loaded = true
             error = nil
         } catch {
@@ -140,6 +143,14 @@ public final class BotStore {
     }
 
     public func bot(named name: String) -> Bot? { bots.first { $0.name == name } }
+
+    /// The bot's chat store, kept for the session like a room's: a Bot Chat stays attached when its screen closes.
+    public func chat(for name: String) -> ChatStore {
+        if let chat = chats[name] { return chat }
+        let chat = ChatStore(gateway: gateway, profile: name, defaults: defaults)
+        chats[name] = chat
+        return chat
+    }
 
     /// The roster bot an agent message came from: by handle when it has one, else by its shown name.
     public func sender(of message: AgentMessage) -> Bot? {
