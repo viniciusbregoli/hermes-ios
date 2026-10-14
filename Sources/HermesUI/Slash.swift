@@ -36,19 +36,21 @@ struct SlashPicker: View {
     var body: some View {
         VStack(spacing: 0) {
             if menu.isOpen(draft) {
+                // Read here, not inside the reader's closure, or new suggestions don't redraw the rows.
+                let items = menu.items, selection = menu.selection
                 ScrollViewReader { proxy in
                     CappedScroll(maxHeight: 8 * 38) {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(menu.items.enumerated()), id: \.element.id) { i, item in
-                                let row = Button { insert(item) } label: { SlashRow(item: item, selected: i == menu.selection) }
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                                let row = Button { insert(item) } label: { SlashRow(item: item, selected: i == selection) }
                                     .buttonStyle(.plain)
-                                    .id(i)
-                                if i == menu.selection { row.keyboardShortcut(.tab, modifiers: []) } else { row }
+                                if i == selection { row.keyboardShortcut(.tab, modifiers: []) } else { row }
                             }
                         }
                     }
-                    .onChange(of: menu.selection) { proxy.scrollTo(menu.selection) }
+                    .onChange(of: selection) { if items.indices.contains(selection) { proxy.scrollTo(items[selection].id) } }
                 }
+                .background(Theme.background)
                 .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
                 Button("Close suggestions") { menu.dismissed = draft }
                     .keyboardShortcut(.escape, modifiers: [])
