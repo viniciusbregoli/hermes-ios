@@ -107,6 +107,7 @@ public extension UserContent {
 extension ChatStore {
     /// A user bubble from transcript text, with its attachment refs pulled out as thumbnails and chips.
     func userItem(id: String, _ text: String) -> ChatItem {
+        if let note = Harness.note(text: text) { return ChatItem(id: id, kind: .system, text: note.title, system: note) }
         let c = UserContent.parse(text)
         return ChatItem(id: id, kind: .user, text: c.text, images: c.images.map { .path($0) },
                         files: c.files.map { ($0 as NSString).lastPathComponent })

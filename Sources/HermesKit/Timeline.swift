@@ -134,7 +134,7 @@ public enum Timeline {
                             ends: [String: TurnEnd] = [:], expanded: Set<String> = []) -> [TimelineRow] {
         var turns: [[ChatItem]] = []
         for item in items {
-            if item.kind == .user || item.kind == .agent || turns.isEmpty { turns.append([item]) } else { turns[turns.count - 1].append(item) }
+            if item.startsTurn || turns.isEmpty { turns.append([item]) } else { turns[turns.count - 1].append(item) }
         }
         var out: [TimelineRow] = []
         for (i, turn) in turns.enumerated() {
@@ -146,7 +146,7 @@ public enum Timeline {
     }
 
     private static func rows(turn: [ChatItem], active: Bool, status: String?, end: TurnEnd?, expanded: Bool) -> [TimelineRow] {
-        let anchored = turn[0].kind == .user || turn[0].kind == .agent
+        let anchored = turn[0].startsTurn
         var body: [TimelineRow] = []
         var pending: [WorkEntry] = []
         func flush(tail: Bool) {

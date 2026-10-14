@@ -218,7 +218,7 @@ extension ChatStore {
             let sid = try await ensureSession()
             if running { try await stopTurn() }
             guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-            let firstTurn = !items[..<index].contains { $0.kind == .user || $0.kind == .agent }
+            let firstTurn = !items[..<index].contains { $0.startsTurn }
             let params = Self.rewindParams(session: sid, text: text, row: row, firstTurn: firstTurn,
                                            rebind: items.compactMap(rowId(of:)))
             // Cut before the call: the turn's first events can arrive ahead of its response.
