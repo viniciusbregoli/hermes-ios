@@ -110,6 +110,9 @@ public struct SubagentRoster: Hashable, Sendable {
     /// Label for the next delegation to start, set when this app asked for one.
     private var expectedTier: String?
     private var tiers: [String: String] = [:]
+    /// Tier labels by model from the profile's `delegation.tiers`, so children the agent sent through
+    /// `delegate_tiered` on its own get one too.
+    private var tierByModel: [String: String] = [:]
 
     public init() {}
 
@@ -118,6 +121,14 @@ public struct SubagentRoster: Hashable, Sendable {
     public func item(_ id: String) -> Subagent? { items.first { $0.id == id } }
 
     public mutating func expect(tier: String) { expectedTier = tier }
+
+    /// Primary models first, so a model that is also another tier's fallback keeps its own tier.
+    public mutating func label(_ routes: [DelegateTier: TierRoute]) {
+        let pairs = DelegateTier.allCases.compactMap { t in routes[t].map { (t, $0) } }
+        let models = pairs.map { ($0.1.model, $0.0.label) } + pairs.flatMap { t, r in r.fallbacks.map { ($0.model, t.label) } }
+        tierByModel = Dictionary(models.filter { !$0.0.isEmpty }) { a, _ in a }
+        for i in items.indices where items[i].tier == nil { items[i].tier = tierByModel[items[i].model] }
+    }
 
     public mutating func apply(_ type: String, _ p: JSON, now: Date = Date()) {
         guard type.hasPrefix("subagent."), type != "subagent.text" else { return }
@@ -135,6 +146,7 @@ public struct SubagentRoster: Hashable, Sendable {
             }
             s.tier = tiers[d]
         }
+        if s.tier == nil { s.tier = tierByModel[s.model] }
         if let index { items[index] = s } else { items.append(s) }
     }
 
@@ -168,7 +180,7 @@ public struct SubagentRoster: Hashable, Sendable {
                 s.lastTool = tool
                 if s.activity.isEmpty { s.activity = [tool] }
             }
-            if s.tier == nil, let d = s.delegationId { s.tier = tiers[d] }
+            if s.tier == nil { s.tier = s.delegationId.flatMap { tiers[$0] } ?? tierByModel[s.model] }
             if let index { items[index] = s } else { items.append(s) }
         }
     }
@@ -211,12 +223,20 @@ public struct SubagentRoster: Hashable, Sendable {
 
 // MARK: - Model tiers
 
-/// How heavy a model a delegated task gets. Hermes has no per-task model argument: the tier
-/// becomes the profile's `delegation.*` config for as long as the child takes to spawn.
+/// How heavy a model a delegated task gets. With the server's delegate-tiers plugin the agent passes the
+/// tier to `delegate_tiered`, which runs it on `delegation.tiers.<tier>`. Without it Hermes has no per-task
+/// model argument, so the tier becomes the profile's `delegation.*` config while the child spawns.
 public enum DelegateTier: String, CaseIterable, Identifiable, Sendable {
     case light, standard, heavy
     public var id: String { rawValue }
     public var label: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+
+    /// The turn that asks the agent to delegate `task` on this tier.
+    public func prompt(_ task: String, plugin: Bool) -> String {
+        plugin
+            ? "Use your delegate_tiered tool with tier \"\(rawValue)\" for this task, then report its result: \(task)"
+            : "Use your delegate_task tool to hand this task to a subagent, then report its result: \(task)"
+    }
 
     static let heavyWords = ["refactor", "design", "debug", "analyze", "analyse", "analysis", "architect", "implement",
                              "write code", "fix", "investigate", "optimize", "optimise", "migrate", "review", "build",
@@ -239,22 +259,59 @@ public enum DelegateTier: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// A model for a tier. An empty `model` inherits the chat's model.
+/// A model on a provider; an empty `model` inherits the chat's model.
 public struct TierModel: Hashable, Sendable {
     public var model: String
     public var provider: String
     public init(model: String, provider: String) { self.model = model; self.provider = provider }
-    public static let inherit = TierModel(model: "", provider: "")
+}
 
-    /// Settings override, stored as "provider|model"; "|" means inherit, missing means automatic.
-    public init?(stored: String) {
-        guard let bar = stored.firstIndex(of: "|") else { return nil }
-        provider = String(stored[..<bar])
-        model = String(stored[stored.index(after: bar)...])
+/// A tier's entry in `delegation.tiers` (delegate-tiers plugin). An empty entry inherits the chat's model.
+public struct TierRoute: Hashable, Sendable {
+    public var model = ""
+    public var provider = ""
+    public var reasoningEffort = ""
+    /// Tried in order when the tier's provider is rate limited or out of quota.
+    public var fallbacks: [TierModel] = []
+
+    public init(model: String = "", provider: String = "", reasoningEffort: String = "", fallbacks: [TierModel] = []) {
+        self.model = model
+        self.provider = provider
+        self.reasoningEffort = reasoningEffort
+        self.fallbacks = fallbacks
     }
 
-    public var stored: String { "\(provider)|\(model)" }
-    public static func overrideKey(_ tier: DelegateTier) -> String { "subagents.tier.\(tier.rawValue)" }
+    init(_ j: JSON?) {
+        model = j?["model"]?.string ?? ""
+        provider = j?["provider"]?.string ?? ""
+        reasoningEffort = j?["reasoning_effort"]?.string ?? ""
+        fallbacks = (j?["fallback_providers"]?.array ?? []).compactMap {
+            guard let m = $0["model"]?.string?.nonEmpty else { return nil }
+            return TierModel(model: m, provider: $0["provider"]?.string ?? "")
+        }
+    }
+
+    /// The tiers of a `GET /api/config` result, or nil when the profile doesn't run the plugin.
+    public static func routes(in config: JSON) -> [DelegateTier: TierRoute]? {
+        guard let tiers = config["delegation"]?["tiers"]?.object,
+              config["plugins"]?["enabled"]?.array?.contains(where: { $0.string == "delegate-tiers" }) == true else { return nil }
+        return Dictionary(uniqueKeysWithValues: DelegateTier.allCases.map { ($0, TierRoute(tiers[$0.rawValue])) })
+    }
+
+    /// The sparse entry that moves this tier to `pick`. The fallback chain was chosen for the current
+    /// provider, so it only changes with it: the current route becomes the first fallback and entries on
+    /// the new provider go. A tier that inherits the chat's model gets no chain of its own.
+    public func change(to pick: TierModel) -> JSON {
+        var body: [String: JSON] = ["model": .string(pick.model), "provider": .string(pick.provider)]
+        if pick.model.isEmpty {
+            body["fallback_providers"] = []
+        } else if pick.provider != provider {
+            let chain = ([TierModel(model: model, provider: provider)] + fallbacks)
+                .filter { !$0.model.isEmpty && $0.provider != pick.provider }
+            body["fallback_providers"] = .array(chain.map { ["provider": .string($0.provider), "model": .string($0.model)] })
+        }
+        return .object(body)
+    }
 }
 
 public enum ModelTiers {
@@ -273,7 +330,7 @@ public enum ModelTiers {
 
     /// A flat-rate account (a ChatGPT/Codex or Copilot subscription, a coding plan): the server reports quota
     /// windows (`usage`) only for those, OAuth sign-ins are subscriptions, and a few slugs are known ones.
-    static func isSubscription(_ row: JSON) -> Bool {
+    public static func isSubscription(_ row: JSON) -> Bool {
         if let usage = row["usage"], !usage.isNull { return true }
         if row["auth_type"]?.string?.contains("oauth") == true { return true }
         return subscriptionSlugs.contains(row["slug"]?.string ?? "")
@@ -284,8 +341,7 @@ public enum ModelTiers {
     /// nothing on a flat rate. Only when no subscription offers one does a pay-per-token provider get the
     /// tier: the cheapest or most expensive model by input price, else by name. Missing when nothing fits.
     public static func defaults(options: JSON, provider: String, model: String) -> [DelegateTier: TierModel] {
-        let rows = (options["providers"]?.array ?? [])
-            .filter { $0["authenticated"]?.bool != false && !($0["models"]?.array ?? []).isEmpty }
+        let rows = usable(options)
             .enumerated().sorted { a, b in
                 let ca = a.element["slug"]?.string == provider, cb = b.element["slug"]?.string == provider
                 return ca != cb ? ca : a.offset < b.offset
@@ -298,6 +354,16 @@ public enum ModelTiers {
                 ?? apis.lazy.compactMap { byName($0, tokens, near: model) }.first
         }
         return out
+    }
+
+    /// Signed-in providers with models, subscriptions first, for a tier's model picker.
+    public static func pickerRows(_ options: JSON) -> [JSON] {
+        let rows = usable(options)
+        return rows.filter(isSubscription) + rows.filter { !isSubscription($0) }
+    }
+
+    static func usable(_ options: JSON) -> [JSON] {
+        (options["providers"]?.array ?? []).filter { $0["authenticated"]?.bool != false && !($0["models"]?.array ?? []).isEmpty }
     }
 
     /// The row's model whose name carries one of `tokens`: closest to the chat model by shared prefix,
@@ -355,7 +421,7 @@ public struct DelegationValues: Hashable, Sendable {
         self.reasoningEffort = reasoningEffort
     }
 
-    init(_ j: JSON?) {
+    public init(_ j: JSON?) {
         model = j?["model"]?.string ?? ""
         provider = j?["provider"]?.string ?? ""
         reasoningEffort = j?["reasoning_effort"]?.string ?? ""
@@ -363,14 +429,24 @@ public struct DelegationValues: Hashable, Sendable {
 
     var json: JSON { ["model": .string(model), "provider": .string(provider), "reasoning_effort": .string(reasoningEffort)] }
 
-    public static func get(_ c: Credentials, profile: String?) async throws -> DelegationValues {
-        DelegationValues(try await send(request(c, profile: profile, method: "GET"))["delegation"])
+    /// The whole profile config; `delegation` and `plugins` are what this app reads.
+    public static func config(_ c: Credentials, profile: String?) async throws -> JSON {
+        try await send(request(c, profile: profile, method: "GET"))
     }
 
     public static func put(_ v: DelegationValues, _ c: Credentials, profile: String?) async throws {
+        try await put(delegation: v.json, c, profile: profile)
+    }
+
+    /// Writes one tier's keys; the other tiers and this tier's unsent keys stay as they are.
+    public static func put(tier: DelegateTier, _ entry: JSON, _ c: Credentials, profile: String?) async throws {
+        try await put(delegation: ["tiers": .object([tier.rawValue: entry])], c, profile: profile)
+    }
+
+    static func put(delegation: JSON, _ c: Credentials, profile: String?) async throws {
         var r = request(c, profile: profile, method: "PUT")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try JSON.object(["config": ["delegation": v.json]]).data()
+        r.httpBody = try JSON.object(["config": ["delegation": delegation]]).data()
         _ = try await send(r)
     }
 
@@ -396,26 +472,30 @@ public struct DelegationValues: Hashable, Sendable {
 
 /// What the Delegate sheet offers: the concrete model behind each tier.
 public struct DelegatePlan: Sendable {
-    public var tiers: [DelegateTier: TierModel]
+    public var tiers: [DelegateTier: TierRoute]
+    /// The profile runs the delegate-tiers plugin and `tiers` is its config; otherwise they are this
+    /// app's picks and delegating swaps the profile's delegation config.
+    public var plugin: Bool
     /// The profile's delegation config before this app touches it.
     public var current: DelegationValues
     public var chatModel: String
     public var chatProvider: String
 
-    /// The model a tier's children run, with the chat model filled in for "inherit".
-    public func model(for tier: DelegateTier) -> String {
-        if let m = tiers[tier] { return m.model.nonEmpty ?? chatModel }
-        return current.model.nonEmpty ?? chatModel
+    /// The route a tier's children run on; an empty model is the chat's.
+    public func route(for tier: DelegateTier) -> TierRoute {
+        if let r = tiers[tier] { return r }
+        if plugin { return TierRoute() }
+        return TierRoute(model: current.model, provider: current.provider,
+                         reasoningEffort: tier == .light ? "low" : current.reasoningEffort)
     }
 
-    /// The config a tier needs. Standard with no override leaves the profile's config alone;
-    /// Light also turns reasoning down. A provider is pinned only when it differs from the chat's.
+    /// The config swap a tier needs without the plugin. Standard with no pick leaves the profile's config
+    /// alone; Light also turns reasoning down. A provider is pinned only when it differs from the chat's.
     public func values(for tier: DelegateTier) -> DelegationValues {
         guard let m = tiers[tier] else {
             return tier == .light ? DelegationValues(model: current.model, provider: current.provider, reasoningEffort: "low") : current
         }
-        return DelegationValues(model: m.model, provider: m.provider == chatProvider ? "" : m.provider,
-                                reasoningEffort: tier == .light ? "low" : "")
+        return DelegationValues(model: m.model, provider: m.provider == chatProvider ? "" : m.provider, reasoningEffort: m.reasoningEffort)
     }
 }
 
@@ -441,6 +521,7 @@ extension ChatStore {
             Task { await restoreDelegation() }
         case "subagent.start":
             subagents.apply(type, p)
+            loadTierLabels()
             Task { await restoreDelegation() }
         default:
             subagents.apply(type, p)
@@ -453,6 +534,20 @@ extension ChatStore {
         guard let r = try? await gateway.call("subagent.list", ["session_id": .string(sid)]),
               sid == runtimeId, subagents.version == before else { return }
         subagents.reconcile(r)
+        if !subagents.isEmpty { loadTierLabels() }
+    }
+
+    /// Fetches the profile's tiers once, so children the agent spawned on its own show their tier.
+    func loadTierLabels() {
+        guard !tierLabelsLoaded, let creds = gateway.credentials else { return }
+        tierLabelsLoaded = true
+        Task {
+            do {
+                if let routes = TierRoute.routes(in: try await DelegationValues.config(creds, profile: profile)) { subagents.label(routes) }
+            } catch {
+                tierLabelsLoaded = false
+            }
+        }
     }
 
     /// The last 16 KB of a live child's transcript; nil once it has none.
@@ -476,8 +571,9 @@ extension ChatStore {
         return try await gateway.call("subagent.interrupt", ["session_id": .string(sid), "subagent_id": .string(id)])["found"]?.bool ?? false
     }
 
-    /// The tiers for the Delegate sheet: Settings overrides first, then models picked from the chat's provider.
-    public func delegatePlan(overrides: UserDefaults = .standard) async throws -> DelegatePlan {
+    /// The tiers for the Delegate sheet: the profile's `delegation.tiers` when it runs the plugin, else
+    /// light and heavy models picked from model.options.
+    public func delegatePlan() async throws -> DelegatePlan {
         guard let creds = gateway.credentials else { throw GatewayError.offline }
         let profile = self.profile
         var params: [String: JSON] = [:]
@@ -485,30 +581,35 @@ extension ChatStore {
         if let profile { params["profile"] = .string(profile) }
         let request = params
         async let options = gateway.call("model.options", request)
-        async let config = DelegationValues.get(creds, profile: profile)
+        async let config = DelegationValues.config(creds, profile: profile)
         let opts = try await options
         let chatProvider = provider.nonEmpty ?? opts["provider"]?.string ?? ""
         let chatModel = model.nonEmpty ?? opts["model"]?.string ?? ""
-        let fetched = try await config
-        let current = pendingDelegation?.previous ?? fetched
-        var tiers = ModelTiers.defaults(options: opts, provider: chatProvider, model: chatModel)
-        tiers[.standard] = nil
-        for tier in DelegateTier.allCases {
-            if let o = overrides.string(forKey: TierModel.overrideKey(tier)).flatMap(TierModel.init(stored:)) { tiers[tier] = o }
+        let cfg = try await config
+        if let routes = TierRoute.routes(in: cfg) {
+            subagents.label(routes)
+            return DelegatePlan(tiers: routes, plugin: true, current: DelegationValues(cfg["delegation"]),
+                                chatModel: chatModel, chatProvider: chatProvider)
         }
-        return DelegatePlan(tiers: tiers, current: current, chatModel: chatModel, chatProvider: chatProvider)
+        var tiers: [DelegateTier: TierRoute] = [:]
+        for (tier, m) in ModelTiers.defaults(options: opts, provider: chatProvider, model: chatModel) where tier != .standard {
+            tiers[tier] = TierRoute(model: m.model, provider: m.provider, reasoningEffort: tier == .light ? "low" : "")
+        }
+        return DelegatePlan(tiers: tiers, plugin: false, current: pendingDelegation?.previous ?? DelegationValues(cfg["delegation"]),
+                            chatModel: chatModel, chatProvider: chatProvider)
     }
 
-    /// Points the profile's delegation config at the tier's model, asks the agent to delegate the task,
-    /// and puts the config back once the child starts (or the turn ends, fails, or two minutes pass).
-    // ponytail: delegation.model is per profile, not per call, so any other delegation in this profile
-    // that spawns inside that window (another chat, a cron job) also gets the temporary model. A
-    // server-side per-call model argument on delegate_task is the real fix.
+    /// Asks the agent to delegate the task on the tier. With the plugin that is one `delegate_tiered` call;
+    /// without it the profile's delegation config points at the tier's model until the child starts (or
+    /// the turn ends, fails, or two minutes pass).
+    // ponytail: the fallback's delegation.model is per profile, not per call, so any other delegation in
+    // this profile that spawns inside that window (another chat, a cron job) also gets the temporary
+    // model. The delegate-tiers plugin is the fix; this path is only for servers without it.
     public func delegate(_ task: String, tier: DelegateTier, plan: DelegatePlan) async {
         let task = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !task.isEmpty else { return }
         let next = plan.values(for: tier)
-        if next != plan.current {
+        if !plan.plugin, next != plan.current {
             guard let creds = gateway.credentials else { return }
             do {
                 try await DelegationValues.put(next, creds, profile: profile)
@@ -525,7 +626,7 @@ extension ChatStore {
             }
         }
         subagents.expect(tier: tier.label)
-        await send("Use your delegate_task tool to hand this task to a subagent, then report its result: \(task)")
+        await send(tier.prompt(task, plugin: plan.plugin))
         if !running { await restoreDelegation() }
     }
 

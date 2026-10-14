@@ -164,24 +164,75 @@ struct SubagentsTests {
         #expect(!ModelTiers.isSubscription(["slug": "openrouter"]))
     }
 
-    @Test func storedOverrides() {
-        #expect(TierModel(stored: "openrouter|google/gemini-flash") == TierModel(model: "google/gemini-flash", provider: "openrouter"))
-        #expect(TierModel(stored: "|") == .inherit)
-        #expect(TierModel(stored: "") == nil)
-        #expect(TierModel(model: "m", provider: "p").stored == "p|m")
+    static let config: JSON = [
+        "delegation": ["model": "", "tiers": [
+            "light": ["provider": "openai-codex", "model": "gpt-6-luna", "reasoning_effort": "low",
+                      "fallback_providers": [["provider": "copilot", "model": "gpt-6-luna"],
+                                             ["provider": "openrouter", "model": "openai/gpt-6-luna"]]],
+            "standard": [:],
+            "heavy": ["provider": "openai-codex", "model": "gpt-6-astra", "reasoning_effort": "high"],
+        ]],
+        "plugins": ["enabled": ["book-rag", "delegate-tiers"]],
+    ]
+
+    @Test func tierRoutesNeedThePlugin() {
+        let routes = TierRoute.routes(in: Self.config)
+        #expect(routes?[.light] == TierRoute(model: "gpt-6-luna", provider: "openai-codex", reasoningEffort: "low",
+                                             fallbacks: [TierModel(model: "gpt-6-luna", provider: "copilot"),
+                                                         TierModel(model: "openai/gpt-6-luna", provider: "openrouter")]))
+        #expect(routes?[.standard] == TierRoute())
+        #expect(routes?[.heavy]?.reasoningEffort == "high")
+        // Tiers without the plugin enabled, or the plugin without tiers, mean the config-swap fallback.
+        #expect(TierRoute.routes(in: ["delegation": Self.config["delegation"]!, "plugins": ["enabled": ["book-rag"]]]) == nil)
+        #expect(TierRoute.routes(in: ["delegation": ["model": ""], "plugins": Self.config["plugins"]!]) == nil)
+    }
+
+    @Test func tierChangesKeepFallbacksUnlessTheProviderMoves() {
+        let light = TierRoute.routes(in: Self.config)![.light]!
+        #expect(light.change(to: TierModel(model: "gpt-6-nova", provider: "openai-codex")) == ["model": "gpt-6-nova", "provider": "openai-codex"])
+        #expect(light.change(to: TierModel(model: "claude-haiku-5.5", provider: "copilot")) == [
+            "model": "claude-haiku-5.5", "provider": "copilot",
+            "fallback_providers": [["provider": "openai-codex", "model": "gpt-6-luna"], ["provider": "openrouter", "model": "openai/gpt-6-luna"]],
+        ])
+        #expect(light.change(to: TierModel(model: "", provider: "")) == ["model": "", "provider": "", "fallback_providers": []])
+    }
+
+    @Test func promptsNameTheTool() {
+        #expect(DelegateTier.light.prompt("ls /etc", plugin: true)
+            == "Use your delegate_tiered tool with tier \"light\" for this task, then report its result: ls /etc")
+        #expect(DelegateTier.heavy.prompt("x", plugin: false).hasPrefix("Use your delegate_task tool"))
+    }
+
+    @Test func childrenGetTheirTierFromTheirModel() {
+        var r = SubagentRoster()
+        r.apply("subagent.start", Self.ev("early", ["model": "gpt-6-astra"]))
+        r.label(TierRoute.routes(in: Self.config)!)
+        #expect(r.item("early")?.tier == "Heavy")
+        r.apply("subagent.start", Self.ev("a", ["delegation_id": "d2", "model": "gpt-6-luna"]))
+        r.apply("subagent.start", Self.ev("b", ["delegation_id": "d3", "model": "openai/gpt-6-luna"]))
+        r.apply("subagent.start", Self.ev("c", ["delegation_id": "d4", "model": "sol"]))
+        #expect(r.item("a")?.tier == "Light" && r.item("b")?.tier == "Light" && r.item("c")?.tier == nil)
+        // The tier the app asked for wins over the model's.
+        r.expect(tier: "Standard")
+        r.apply("subagent.start", Self.ev("d", ["delegation_id": "d5", "model": "gpt-6-luna"]))
+        #expect(r.item("d")?.tier == "Standard")
     }
 
     @Test func planValues() {
         let current = DelegationValues(model: "", provider: "", reasoningEffort: "")
-        let plan = DelegatePlan(tiers: [.light: TierModel(model: "mini", provider: "codex"), .heavy: TierModel(model: "big", provider: "or")],
-                                current: current, chatModel: "sol", chatProvider: "codex")
+        let plan = DelegatePlan(tiers: [.light: TierRoute(model: "mini", provider: "codex", reasoningEffort: "low"),
+                                        .heavy: TierRoute(model: "big", provider: "or")],
+                                plugin: false, current: current, chatModel: "sol", chatProvider: "codex")
         #expect(plan.values(for: .light) == DelegationValues(model: "mini", provider: "", reasoningEffort: "low"))
         #expect(plan.values(for: .heavy) == DelegationValues(model: "big", provider: "or", reasoningEffort: ""))
-        // Standard without an override leaves the profile alone.
+        // Standard without a pick leaves the profile alone.
         #expect(plan.values(for: .standard) == current)
-        #expect(plan.model(for: .standard) == "sol" && plan.model(for: .light) == "mini")
-        let bare = DelegatePlan(tiers: [:], current: current, chatModel: "sol", chatProvider: "codex")
+        #expect(plan.route(for: .standard).model == "" && plan.route(for: .light).model == "mini")
+        let bare = DelegatePlan(tiers: [:], plugin: false, current: current, chatModel: "sol", chatProvider: "codex")
         #expect(bare.values(for: .light).reasoningEffort == "low" && bare.values(for: .light).model == "")
+        // With the plugin an unset tier is the chat's model, whatever delegation.model says.
+        let served = DelegatePlan(tiers: [:], plugin: true, current: DelegationValues(model: "old"), chatModel: "sol", chatProvider: "codex")
+        #expect(served.route(for: .light) == TierRoute())
     }
 
     @Test func configRequestIsScopedAndAuthorized() throws {
