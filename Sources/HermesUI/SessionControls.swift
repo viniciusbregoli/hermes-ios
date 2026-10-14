@@ -60,7 +60,9 @@ struct ApprovalsMenu: View {
 
     var body: some View {
         Menu {
+            // info.yolo already includes the global mode, so the per-chat switch changes nothing while it is off.
             Toggle("Skip approvals in this chat", isOn: Binding(get: { store.yolo }, set: { on in Task { await store.setYolo(on) } }))
+                .disabled(store.approvalMode == "off")
             if store.approvalMode == "off" {
                 Text("Approvals are off in the Hermes config")
             }
@@ -146,7 +148,7 @@ struct TodoRow: View {
     let live: Bool
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(spacing: 8) {
             Group {
                 switch todo.status {
                 case .inProgress where live: ProgressView().controlSize(.mini)
@@ -299,7 +301,7 @@ struct ContextSheet: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .task {
             breakdown = await store.contextBreakdown()
             loading = false
