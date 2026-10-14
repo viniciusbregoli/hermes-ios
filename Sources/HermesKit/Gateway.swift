@@ -15,6 +15,12 @@ public struct ServerRequest: Identifiable, Sendable {
     public let params: JSON
     public var id: String { params["request_id"]?.string ?? rpcId.string ?? "" }
     public var sessionId: String { params["session_id"]?.string ?? "" }
+
+    public init(rpcId: JSON, method: String, params: JSON) {
+        self.rpcId = rpcId
+        self.method = method
+        self.params = params
+    }
 }
 
 public enum GatewayError: LocalizedError {
