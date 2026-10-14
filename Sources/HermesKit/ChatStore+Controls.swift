@@ -175,6 +175,7 @@ extension ChatStore {
     /// Runs before the transcript folding in `handle`, for events of the open chat.
     func handleControls(_ type: String, _ p: JSON) {
         foldSubagents(type, p)
+        foldSlash(type, p)
         switch type {
         case "message.start":
             retryText = nil
