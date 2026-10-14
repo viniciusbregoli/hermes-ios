@@ -238,6 +238,16 @@ public enum DelegateTier: String, CaseIterable, Identifiable, Sendable {
             : "Use your delegate_task tool to hand this task to a subagent, then report its result: \(task)"
     }
 
+    /// What the bubble shows for a turn built by `prompt`, in this chat and when it is reloaded: the task
+    /// with its tier, not the instruction to the agent. nil for any other text.
+    static func displayed(_ text: String) -> String? {
+        let pattern = #"^Use your (?:delegate_tiered tool with tier "(\w+)" for this task|delegate_task tool to hand this task to a subagent), then report its result: ([\s\S]*)$"#
+        guard let m = try? NSRegularExpression(pattern: pattern).firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let task = Range(m.range(at: 2), in: text) else { return nil }
+        let tier = Range(m.range(at: 1), in: text).flatMap { DelegateTier(rawValue: String(text[$0])) }
+        return "Delegate\(tier.map { " (\($0.label))" } ?? ""): \(text[task])"
+    }
+
     static let heavyWords = ["refactor", "design", "debug", "analyze", "analyse", "analysis", "architect", "implement",
                              "write code", "fix", "investigate", "optimize", "optimise", "migrate", "review", "build",
                              "rewrite", "prove", "diagnose"]
@@ -626,7 +636,8 @@ extension ChatStore {
             }
         }
         subagents.expect(tier: tier.label)
-        await send(tier.prompt(task, plugin: plan.plugin))
+        let prompt = tier.prompt(task, plugin: plan.plugin)
+        await send(prompt, display: DelegateTier.displayed(prompt))
         if !running { await restoreDelegation() }
     }
 
