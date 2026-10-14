@@ -451,11 +451,10 @@ public final class ChatStore {
     }
 
     func receive(_ r: ServerRequest) {
-        switch r.method {
-        case "approval", "clarify", "sudo", "secret":
+        if ServerRequest.prompts.contains(r.method) {
             requests.removeAll { $0.id == r.id }
             requests.append(r)
-        default:
+        } else {
             // Desktop-only surfaces (previews, terminal reads, tours, vault UI).
             gateway.reject(r)
         }
@@ -638,6 +637,7 @@ public final class ChatStore {
         for r in s["open_requests"]?.array ?? [] {
             receive(ServerRequest(rpcId: r["id"] ?? .null, method: r["method"]?.string ?? "", params: r["params"] ?? .null))
         }
+        if let sid = runtimeId { gateway.take(session: sid).forEach(receive) }
         applySnapshotExtras(s)
     }
 
@@ -744,6 +744,9 @@ public final class ChatStore {
         runtimeId = nil
         if !running, selectedId != canonicalId || canonicalId == nil {
             _ = try? await gateway.call("session.close", scoped(["session_id": .string(sid)]))
+        } else {
+            // The session stays open and so do its prompts; they wait in the inbox for the chat to come back.
+            gateway.park(requests)
         }
     }
 
