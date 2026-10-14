@@ -302,19 +302,23 @@ struct SessionRowView: View {
     /// Replaces the first prompt when the latest reply is known.
     var preview: String?
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
+        let stacked = typeSize.isAccessibilitySize
         VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline) {
-                if unread { UnreadDot() }
-                Text(session.title.nonEmpty ?? "Untitled")
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
+            // Accessibility sizes stack title, status and time, so the title gets the full row instead of three characters.
+            let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+            layout {
+                HStack(alignment: .firstTextBaseline) {
+                    if unread { UnreadDot() }
+                    Text(session.title.nonEmpty ?? "Untitled")
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(stacked ? 3 : 1)
+                }
                 if let status = live?.status { StatusPill(status: Self.pill(status)) }
-                Spacer()
-                // The server's clock can run a little ahead of the phone's, which would read "in 0 sec".
-                Text(min(max(session.activity, live?.lastActive ?? .distantPast), Date().addingTimeInterval(-1)), format: .relative(presentation: .numeric, unitsStyle: .narrow))
-                    .font(.caption2)
-                    .foregroundStyle(Theme.muted)
+                if !stacked { Spacer() }
+                time
             }
             if let preview = (preview ?? session.preview).nonEmpty {
                 Text(preview)
@@ -324,6 +328,13 @@ struct SessionRowView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private var time: some View {
+        // The server's clock can run a little ahead of the phone's, which would read "in 0 sec".
+        Text(min(max(session.activity, live?.lastActive ?? .distantPast), Date().addingTimeInterval(-1)), format: .relative(presentation: .numeric, unitsStyle: .narrow))
+            .font(.caption2)
+            .foregroundStyle(Theme.muted)
     }
 
     /// The Activity tab's pills for the same states: working in the accent, waiting in the alarm color of an approval.
@@ -369,6 +380,7 @@ struct SettingsView: View {
     @AppStorage(ChatTextSize.key) private var textSize = ChatTextSize.standard
     @AppStorage("showTouches") private var showTouches = false
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var system
     @State private var confirmSignOut = false
 
     var body: some View {
@@ -379,9 +391,12 @@ struct SettingsView: View {
                         Button { themeId = p.id } label: {
                             HStack(spacing: 12) {
                                 Swatch(palette: p)
-                                Text(p.name).foregroundStyle(Theme.foreground)
-                                if p.light == nil {
-                                    Text("dark only").font(.caption2).foregroundStyle(Theme.muted)
+                                // Stacked, so a large text size doesn't squeeze the name beside "dark only".
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(p.name).foregroundStyle(Theme.foreground)
+                                    if p.light == nil {
+                                        Text("dark only").font(.caption2).foregroundStyle(Theme.muted)
+                                    }
                                 }
                                 Spacer()
                                 if p.id == themeId { Image(systemName: "checkmark").foregroundStyle(Theme.primary) }
@@ -397,7 +412,7 @@ struct SettingsView: View {
                     .disabled(darkOnly)
                 }
                 .listRowBackground(Theme.sidebar)
-                Section("Chat text size") {
+                Section {
                     HStack(spacing: 10) {
                         Text("A").font(.caption)
                         Slider(value: Binding(get: { Double(textSize) }, set: { textSize = ChatTextSize.clamped(Int($0.rounded())) }),
@@ -407,10 +422,14 @@ struct SettingsView: View {
                         Text("A").font(.title2)
                     }
                     HStack {
-                        Text("The quick brown fox").font(.body).dynamicTypeSize(ChatTextSize.size(textSize))
+                        Text("The quick brown fox").font(.body).dynamicTypeSize(ChatTextSize.effective(textSize, system: system))
                         Spacer()
                         Text(ChatTextSize.label(textSize)).font(.caption).foregroundStyle(Theme.muted)
                     }
+                } header: {
+                    Text("Chat text size")
+                } footer: {
+                    Text("Relative to the system text size in Settings > Display & Brightness.")
                 }
                 .listRowBackground(Theme.sidebar)
                 SubagentSettingsSection(gateway: gateway)

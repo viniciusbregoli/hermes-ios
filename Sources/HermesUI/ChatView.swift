@@ -5,6 +5,8 @@ struct ChatView: View {
     @Bindable var store: ChatStore
     /// The roster, for @mentions and bot-to-bot notices.
     var bots: BotStore?
+    /// Shown beside the title in a bot's chat.
+    var avatar: BotAvatar?
     @State private var draft = ""
     @State private var slash = SlashMenu()
     @FocusState private var composerFocused: Bool
@@ -27,6 +29,10 @@ struct ChatView: View {
     @State private var setAside = ""
     @State private var speaker = Speaker()
     @Environment(\.scenePhase) private var scenePhase
+    /// Landscape on a phone: the controls row hides behind a button so the transcript keeps some height above the keyboard.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var showControls = false
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private static let end = "timeline-end"
 
@@ -106,6 +112,9 @@ struct ChatView: View {
                 guard following else { return }
                 toEnd(proxy)
             }
+            // The transcript follows the system text size now; shrinking it leaves the old offset past the end. Rotating does the same.
+            .onChange(of: typeSize) { Task { toEnd(proxy) } }
+            .onChange(of: verticalSizeClass) { if following { Task { toEnd(proxy) } } }
             .onChange(of: store.loading) {
                 guard !store.loading else { return }
                 following = ScrollFollow.next(following, .reset)
@@ -150,14 +159,25 @@ struct ChatView: View {
                     }
                     SlashPicker(store: store, menu: slash, draft: $draft, run: runSlash)
                     SubagentsBar(store: store)
-                    ControlsRow(store: store, draft: $draft)
+                    if verticalSizeClass != .compact || showControls { ControlsRow(store: store, draft: $draft) }
                     if editing != nil { EditBanner(cancel: endEditing) }
                     if store.queueEditing != nil { EditBanner(detail: "Updates the queued message; it still sends when the turn ends.", cancel: endEditing) }
                     AttachmentChips(store: store)
                     HStack(alignment: .bottom, spacing: 0) {
                         AttachButton(store: store)
-                            .padding([.leading, .bottom], 10)
+                            .padding(.leading, 10)
+                            .padding(.bottom, verticalSizeClass == .compact ? 4 : 10)
                             .disabled(store.gateway.status != .online)
+                        if verticalSizeClass == .compact {
+                            Button { showControls.toggle() } label: {
+                                Image(systemName: "slider.horizontal.3")
+                                    .foregroundStyle(showControls ? Theme.primary : Theme.muted)
+                                    .tapTarget()
+                            }
+                            .padding(.bottom, 4)
+                            .accessibilityLabel("Chat controls")
+                            .accessibilityValue(showControls ? "Shown" : "Hidden")
+                        }
                         Composer(draft: $draft, focused: $composerFocused,
                                  placeholder: editing == nil && store.queueEditing == nil ? "Message \(botName)" : "Edit message",
                                  running: store.running, enabled: store.gateway.status == .online,
@@ -186,6 +206,8 @@ struct ChatView: View {
                             Task { await store.send(text, note: note) }
                         }
                     }
+                    // The attach and send icons are fixed 44 pt frames and the field would shrink to "Messa...", so the row stops growing here.
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility2)
                     .modifier(SlashKeys(menu: slash, draft: draft))
                 }
                 .background(Theme.background)
@@ -198,11 +220,14 @@ struct ChatView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        // Landscape with the keyboard up leaves almost no transcript, so the bar steps aside while typing.
+        .toolbar(verticalSizeClass == .compact && composerFocused ? .hidden : .automatic, for: .navigationBar)
         #endif
         .toolbar {
+            // The title and model share the center, so the trailing items keep two small icons and the title is readable.
+            ToolbarItem(placement: .principal) { ChatTitle(store: store, avatar: avatar) }
             if !store.readOnly {
                 ToolbarItem(placement: .primaryAction) { ContextMeter(store: store) }
-                ToolbarItem(placement: .primaryAction) { ModelMenu(store: store) }
             }
             ToolbarItem(placement: .primaryAction) { ChatMenu(store: store, assistant: botName) }
         }
@@ -495,11 +520,13 @@ struct Composer: View {
     /// Offered on a long press while `button` can steer.
     var steer: SteerAction?
     let send: () -> Void
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     var body: some View {
+        let compact = verticalSizeClass == .compact
         HStack(alignment: .bottom, spacing: 8) {
             TextField(placeholder, text: $draft, axis: .vertical)
-                .lineLimit(1...8)
+                .lineLimit(1...(compact ? 3 : 8))
                 .focused(focused)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -532,7 +559,8 @@ struct Composer: View {
             .help(button.map { $0.canSteer ? "\($0.label) (⌘↩), hold for Steer now (⇧⌘↩)" : "\($0.label) (⌘↩)" }
                   ?? (running ? "Queue message (⌘↩)" : "Send (⌘↩)"))
         }
-        .padding(10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, compact ? 4 : 10)
     }
 }
 
@@ -651,6 +679,26 @@ struct FlowChoices: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Title
+
+/// The nav bar's center: the chat title over the model menu.
+struct ChatTitle: View {
+    let store: ChatStore
+    var avatar: BotAvatar?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            avatar
+            VStack(spacing: 0) {
+                Text(store.title).font(.headline).lineLimit(1)
+                if !store.readOnly { ModelMenu(store: store) }
+            }
+        }
+        // The bar has a fixed height, so its text stops growing before the title would clip.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
     }
 }
 
