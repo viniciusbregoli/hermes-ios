@@ -81,9 +81,22 @@ public struct BackgroundProcess: Hashable, Sendable {
         running || exitedAt.map { now.timeIntervalSince($0) < Self.exitedWindow } ?? false
     }
 
-    /// Processes started on a pty write color codes, which would show as stray brackets.
+    /// Terminal escape sequences: OSC (window title, cwd, prompt marks), DCS/APC/PM/SOS strings, CSI with its
+    /// private parameters and intermediates (colors, bracketed paste, keyboard protocols) and the one- or
+    /// two-character escapes. A string cut off before its terminator runs to the end of the text.
+    private static let escapes = try! NSRegularExpression(
+        pattern: #"\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\|\z)|[PX^_][^\x1B]*(?:\x1B\\|\z)|\[[0-?]*[ -/]*[@-~]|[ -/]*[0-~])"#)
+    /// What is left of the control range, except newline and tab, and the private-use glyphs (powerline, nerd
+    /// fonts, in the BMP and the supplementary planes) a prompt draws with, which have no glyph here and show as boxes.
+    private static let strays = try! NSRegularExpression(pattern: #"[\x00-\x08\x0B-\x1F\x7F\x{E000}-\x{F8FF}\x{F0000}-\x{10FFFD}]"#)
+
+    /// Processes started on a pty write prompts and color codes, which would show as stray brackets and boxes.
     static func stripEscapes(_ s: String) -> String {
-        s.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+        var text = s.replacingOccurrences(of: "\r\n", with: "\n")
+        for re in [escapes, strays] {
+            text = re.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
+        }
+        return text
     }
 
     static func parse(_ rows: JSON?, session: String, now: Date) -> [BackgroundProcess] {
