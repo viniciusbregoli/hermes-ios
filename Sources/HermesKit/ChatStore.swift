@@ -115,6 +115,9 @@ public final class ChatStore {
     public internal(set) var fastUnsupportedModel: String?
     public internal(set) var yolo = false
     public internal(set) var approvalMode = ""
+    /// Delegated children of the open chat; folded in Subagents.swift.
+    public internal(set) var subagents = SubagentRoster()
+    @ObservationIgnored var pendingDelegation: PendingDelegation?
 
     @ObservationIgnored private var nextLocalId = 0
 

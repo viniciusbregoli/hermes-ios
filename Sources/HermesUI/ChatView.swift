@@ -128,7 +128,8 @@ struct ChatView: View {
                         MentionPicker(candidates: candidates, bots: bots) { draft = MentionPicker.complete(draft, with: $0) }
                     }
                 }
-                ControlsRow(store: store)
+                SubagentsBar(store: store)
+                ControlsRow(store: store, draft: $draft)
                 AttachmentChips(store: store)
                 HStack(alignment: .bottom, spacing: 0) {
                     AttachButton(store: store)

@@ -269,6 +269,7 @@ struct SettingsView: View {
                     .disabled(Palette.named(themeId).light == nil)
                 }
                 .listRowBackground(Theme.sidebar)
+                SubagentSettingsSection(gateway: gateway)
                 Section("Gateway") {
                     LabeledContent("Server", value: gateway.credentials?.baseURL.absoluteString ?? "")
                     LabeledContent("User", value: gateway.credentials?.username ?? "")

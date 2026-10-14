@@ -8,6 +8,7 @@ import HermesKit
 /// Reasoning effort, fast mode and approvals for the open chat, in a row above the composer.
 struct ControlsRow: View {
     let store: ChatStore
+    @Binding var draft: String
 
     var body: some View {
         HStack(spacing: 6) {
@@ -18,6 +19,7 @@ struct ControlsRow: View {
                 }
                 .buttonStyle(Pill(active: store.fast))
             }
+            DelegateButton(store: store, draft: $draft)
             Spacer(minLength: 0)
             ApprovalsMenu(store: store)
         }
