@@ -81,9 +81,13 @@ public struct RootView: View {
             if phase == .active { store.gateway.start() }
         }
         #if os(iOS)
+        .onChange(of: scenePhase) { _, phase in BackgroundTurn.shared.update(away: phase != .active, running: turnRunning) }
+        .onChange(of: turnRunning) { _, running in BackgroundTurn.shared.update(away: scenePhase != .active, running: running) }
         .onChange(of: showTouches, initial: true) { _, on in TouchIndicator.shared.setEnabled(on) }
         #endif
     }
+
+    private var turnRunning: Bool { store.running || !bots.thinking.isEmpty }
 
     private func open(_ target: ActivityItem.Target) {
         switch target {
@@ -279,7 +283,7 @@ struct MainView: View {
 
     private func rows(_ sessions: [SessionRow]) -> some View {
         ForEach(sessions) { s in
-            SessionRowView(session: s, unread: store.unread[s.id] != nil).tag(s.id)
+            SessionRowView(session: s, unread: store.unread[s.id] != nil, live: store.live[s.id], preview: store.preview(of: s)).tag(s.id)
                 .listRowBackground(Theme.sidebar)
                 .sessionActions(store, s, renaming: $renaming)
         }
