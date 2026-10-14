@@ -49,7 +49,7 @@ struct ChatExportTests {
         #expect(md.hasPrefix("# Charts\n\n_Exported "))
         #expect(md.contains("\n## You\n\nMake a chart\n\nAttached: `data.csv`\n"))
         #expect(md.contains("\n> - Used terminal: `python plot.py`\n> - Used write_file\n"))
-        #expect(md.contains("\n## Hermes\n\nHere it is:\n\n\n[a b.png](/tmp/a%20b.png)\n"))
+        #expect(md.contains("\n## Hermes\n\nHere it is:\n\n[a b.png](/tmp/a%20b.png)\n"))
         #expect(md.contains("\n> Error: Rate limited\n"))
         #expect(!md.contains("/model changed"))
     }

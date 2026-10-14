@@ -39,6 +39,7 @@ public enum ChatExport {
     /// `MEDIA:` tags as links to the file's path on the gateway machine.
     static func links(_ text: String) -> String {
         Media.renderTags(text).replacingOccurrences(of: "](\(Media.scheme):", with: "](")
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
     }
 
     static func toolNote(_ tool: ToolCall) -> String {
