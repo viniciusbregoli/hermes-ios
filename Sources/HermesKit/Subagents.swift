@@ -110,6 +110,9 @@ public struct SubagentRoster: Hashable, Sendable {
     /// Label for the next delegation to start, set when this app asked for one.
     private var expectedTier: String?
     private var tiers: [String: String] = [:]
+    /// Tier labels by model from the profile's `delegation.tiers`, so children the agent sent through
+    /// `delegate_tiered` on its own get one too.
+    private var tierByModel: [String: String] = [:]
 
     public init() {}
 
@@ -118,6 +121,14 @@ public struct SubagentRoster: Hashable, Sendable {
     public func item(_ id: String) -> Subagent? { items.first { $0.id == id } }
 
     public mutating func expect(tier: String) { expectedTier = tier }
+
+    /// Primary models first, so a model that is also another tier's fallback keeps its own tier.
+    public mutating func label(_ routes: [DelegateTier: TierRoute]) {
+        let pairs = DelegateTier.allCases.compactMap { t in routes[t].map { (t, $0) } }
+        let models = pairs.map { ($0.1.model, $0.0.label) } + pairs.flatMap { t, r in r.fallbacks.map { ($0.model, t.label) } }
+        tierByModel = Dictionary(models.filter { !$0.0.isEmpty }) { a, _ in a }
+        for i in items.indices where items[i].tier == nil { items[i].tier = tierByModel[items[i].model] }
+    }
 
     public mutating func apply(_ type: String, _ p: JSON, now: Date = Date()) {
         guard type.hasPrefix("subagent."), type != "subagent.text" else { return }
@@ -135,6 +146,7 @@ public struct SubagentRoster: Hashable, Sendable {
             }
             s.tier = tiers[d]
         }
+        if s.tier == nil { s.tier = tierByModel[s.model] }
         if let index { items[index] = s } else { items.append(s) }
     }
 
@@ -168,7 +180,7 @@ public struct SubagentRoster: Hashable, Sendable {
                 s.lastTool = tool
                 if s.activity.isEmpty { s.activity = [tool] }
             }
-            if s.tier == nil, let d = s.delegationId { s.tier = tiers[d] }
+            if s.tier == nil { s.tier = s.delegationId.flatMap { tiers[$0] } ?? tierByModel[s.model] }
             if let index { items[index] = s } else { items.append(s) }
         }
     }
@@ -509,6 +521,7 @@ extension ChatStore {
             Task { await restoreDelegation() }
         case "subagent.start":
             subagents.apply(type, p)
+            loadTierLabels()
             Task { await restoreDelegation() }
         default:
             subagents.apply(type, p)
@@ -521,6 +534,20 @@ extension ChatStore {
         guard let r = try? await gateway.call("subagent.list", ["session_id": .string(sid)]),
               sid == runtimeId, subagents.version == before else { return }
         subagents.reconcile(r)
+        if !subagents.isEmpty { loadTierLabels() }
+    }
+
+    /// Fetches the profile's tiers once, so children the agent spawned on its own show their tier.
+    func loadTierLabels() {
+        guard !tierLabelsLoaded, let creds = gateway.credentials else { return }
+        tierLabelsLoaded = true
+        Task {
+            do {
+                if let routes = TierRoute.routes(in: try await DelegationValues.config(creds, profile: profile)) { subagents.label(routes) }
+            } catch {
+                tierLabelsLoaded = false
+            }
+        }
     }
 
     /// The last 16 KB of a live child's transcript; nil once it has none.
@@ -560,6 +587,7 @@ extension ChatStore {
         let chatModel = model.nonEmpty ?? opts["model"]?.string ?? ""
         let cfg = try await config
         if let routes = TierRoute.routes(in: cfg) {
+            subagents.label(routes)
             return DelegatePlan(tiers: routes, plugin: true, current: DelegationValues(cfg["delegation"]),
                                 chatModel: chatModel, chatProvider: chatProvider)
         }

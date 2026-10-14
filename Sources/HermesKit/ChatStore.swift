@@ -120,6 +120,7 @@ public final class ChatStore {
     /// Delegated children of the open chat; folded in Subagents.swift.
     public internal(set) var subagents = SubagentRoster()
     @ObservationIgnored var pendingDelegation: PendingDelegation?
+    @ObservationIgnored var tierLabelsLoaded = false
 
     @ObservationIgnored private var nextLocalId = 0
 
