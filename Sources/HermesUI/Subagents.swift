@@ -400,7 +400,7 @@ struct DelegateSheet: View {
         guard let plan else { return error == nil ? "Loading…" : "Unavailable" }
         let model = ModelMenu.short(plan.model(for: t))
         let values = plan.values(for: t)
-        let note = values.model.isEmpty ? " (chat model)" : ""
+        let note = values.model.isEmpty ? " (chat model)" : values.provider.isEmpty ? "" : " via \(values.provider)"
         return model + note + (values.reasoningEffort == "low" ? " · low effort" : "")
     }
 
@@ -430,7 +430,7 @@ struct SubagentSettingsSection: View {
         } header: {
             Text("Subagents")
         } footer: {
-            Text("Delegate runs a task on one of these tiers. Automatic picks the cheapest and the most capable models of the chat's provider; Standard keeps the profile's default.")
+            Text("Delegate runs a task on one of these tiers. Automatic prefers a light or a heavy model from your subscriptions (ChatGPT, Copilot, coding plans) over pay-per-token providers; Standard keeps the profile's default.")
         }
         .listRowBackground(Theme.sidebar)
         .task(id: gateway.status) {

@@ -246,6 +246,8 @@ public struct TierModel: Hashable, Sendable {
 public enum ModelTiers {
     static let lightTokens: Set<String> = ["mini", "nano", "flash", "haiku", "lite", "small", "tiny", "micro"]
     static let heavyTokens: Set<String> = ["pro", "max", "opus", "ultra", "large"]
+    /// Flat-rate providers for servers whose rows carry no usage windows or auth type.
+    static let subscriptionSlugs: Set<String> = ["openai-codex", "copilot", "copilot-acp", "zai", "nous", "kimi-coding"]
 
     /// "$0.25/Mtok" → 0.25, "free" → 0, unknown ("") → nil.
     static func price(_ raw: String?) -> Double? {
@@ -255,35 +257,68 @@ public enum ModelTiers {
         return Double(number)
     }
 
-    /// Light is the cheapest model of the chat's provider by input price, Heavy the most expensive;
-    /// without prices, model names decide (mini/flash/haiku... vs pro/max/opus...). Among name matches the
-    /// one closest to the chat's model wins, so a gpt chat gets a gpt mini. Nil when nothing fits.
+    /// A flat-rate account (a ChatGPT/Codex or Copilot subscription, a coding plan): the server reports quota
+    /// windows (`usage`) only for those, OAuth sign-ins are subscriptions, and a few slugs are known ones.
+    static func isSubscription(_ row: JSON) -> Bool {
+        if let usage = row["usage"], !usage.isNull { return true }
+        if row["auth_type"]?.string?.contains("oauth") == true { return true }
+        return subscriptionSlugs.contains(row["slug"]?.string ?? "")
+    }
+
+    /// Light and Heavy come from signed-in subscription providers first, the chat's own provider ahead of
+    /// the others, picked by name (mini/flash/haiku... vs pro/max/opus...) since per-token price means
+    /// nothing on a flat rate. Only when no subscription offers one does a pay-per-token provider get the
+    /// tier: the cheapest or most expensive model by input price, else by name. Missing when nothing fits.
     public static func defaults(options: JSON, provider: String, model: String) -> [DelegateTier: TierModel] {
-        guard let row = options["providers"]?.array?.first(where: { $0["slug"]?.string == provider }) else { return [:] }
-        let models = row["models"]?.array?.compactMap(\.string) ?? []
-        let priced = models.compactMap { m in price(row["pricing"]?[m]?["input"]?.string).map { (m, $0) } }
+        let rows = (options["providers"]?.array ?? [])
+            .filter { $0["authenticated"]?.bool != false && !($0["models"]?.array ?? []).isEmpty }
+            .enumerated().sorted { a, b in
+                let ca = a.element["slug"]?.string == provider, cb = b.element["slug"]?.string == provider
+                return ca != cb ? ca : a.offset < b.offset
+            }.map(\.element)
+        let subscriptions = rows.filter(isSubscription), apis = rows.filter { !isSubscription($0) }
         var out: [DelegateTier: TierModel] = [:]
-        if Set(priced.map(\.1)).count >= 2 {
-            // Stable picks: the first model at the extreme price.
-            if let light = priced.min(by: { $0.1 < $1.1 }) { out[.light] = TierModel(model: light.0, provider: provider) }
-            if let heavy = priced.max(by: { $0.1 < $1.1 }) { out[.heavy] = TierModel(model: heavy.0, provider: provider) }
-            return out
+        for (tier, tokens) in [(DelegateTier.light, lightTokens), (.heavy, heavyTokens)] {
+            out[tier] = subscriptions.lazy.compactMap { byName($0, tokens, near: model) }.first
+                ?? byPrice(apis, cheapest: tier == .light)
+                ?? apis.lazy.compactMap { byName($0, tokens, near: model) }.first
         }
-        func closest(_ tokens: Set<String>) -> String? {
-            models.filter { !tokens.isDisjoint(with: Self.tokens($0)) }
-                .enumerated().max { a, b in
-                    let pa = commonPrefix(a.element, model), pb = commonPrefix(b.element, model)
-                    return pa != pb ? pa < pb : a.offset > b.offset
-                }?.element
-        }
-        if let m = closest(lightTokens) { out[.light] = TierModel(model: m, provider: provider) }
-        if let m = closest(heavyTokens) { out[.heavy] = TierModel(model: m, provider: provider) }
         return out
+    }
+
+    /// The row's model whose name carries one of `tokens`: closest to the chat model by shared prefix,
+    /// then the newest version, then the shortest name.
+    static func byName(_ row: JSON, _ tokens: Set<String>, near model: String) -> TierModel? {
+        let models = row["models"]?.array?.compactMap(\.string) ?? []
+        let best = models.filter { !tokens.isDisjoint(with: Self.tokens($0)) }.enumerated().max { a, b in
+            let ka = (commonPrefix(a.element, model), version(a.element)), kb = (commonPrefix(b.element, model), version(b.element))
+            if ka != kb { return ka < kb }
+            return a.element.count != b.element.count ? a.element.count > b.element.count : a.offset > b.offset
+        }?.element
+        return best.map { TierModel(model: $0, provider: row["slug"]?.string ?? "") }
+    }
+
+    /// The cheapest or dearest priced model across pay-per-token rows; nil unless at least two prices differ.
+    static func byPrice(_ rows: [JSON], cheapest: Bool) -> TierModel? {
+        let priced = rows.flatMap { row in
+            (row["models"]?.array?.compactMap(\.string) ?? []).compactMap { m in
+                price(row["pricing"]?[m]?["input"]?.string).map { (TierModel(model: m, provider: row["slug"]?.string ?? ""), $0) }
+            }
+        }
+        guard Set(priced.map(\.1)).count >= 2 else { return nil }
+        // Stable picks: the first model at the extreme price.
+        return (cheapest ? priced.min { $0.1 < $1.1 } : priced.max { $0.1 < $1.1 })?.0
     }
 
     static func tokens(_ model: String) -> Set<String> {
         let name = model.split(separator: "/").last.map(String.init) ?? model
         return Set(name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+    }
+
+    /// The first version number in a model name ("claude-opus-4.8-fast" → 4.8), 0 when there is none.
+    static func version(_ model: String) -> Double {
+        let name = model.split(separator: "/").last.map(String.init) ?? model
+        return name.range(of: #"\d+(\.\d+)?"#, options: .regularExpression).flatMap { Double(name[$0]) } ?? 0
     }
 
     static func commonPrefix(_ a: String, _ b: String) -> Int {

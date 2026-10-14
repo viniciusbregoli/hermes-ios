@@ -105,14 +105,14 @@ struct SubagentsTests {
         #expect(ModelTiers.price(nil) == nil)
     }
 
-    @Test func tiersByPrice() {
+    @Test func apiProvidersRankByPrice() {
         let options: JSON = ["providers": [
             ["slug": "other", "models": ["cheap"], "pricing": ["cheap": ["input": "$0.01/Mtok"]]],
             ["slug": "or", "models": ["a", "b", "c"],
              "pricing": ["a": ["input": "$3/Mtok"], "b": ["input": "$0.10/Mtok"], "c": ["input": "$15/Mtok"]]],
         ]]
         let t = ModelTiers.defaults(options: options, provider: "or", model: "a")
-        #expect(t[.light] == TierModel(model: "b", provider: "or"))
+        #expect(t[.light] == TierModel(model: "cheap", provider: "other"))
         #expect(t[.heavy] == TierModel(model: "c", provider: "or"))
     }
 
@@ -122,9 +122,34 @@ struct SubagentsTests {
         let t = ModelTiers.defaults(options: options, provider: "openai-codex", model: "gpt-6.1-sol")
         #expect(t[.light]?.model == "gpt-6.1-mini")
         #expect(t[.heavy]?.model == "gpt-6.1-pro")
-        #expect(ModelTiers.defaults(options: options, provider: "missing", model: "x").isEmpty)
         let plain: JSON = ["providers": [["slug": "p", "models": ["alpha", "beta"]]]]
         #expect(ModelTiers.defaults(options: plain, provider: "p", model: "alpha").isEmpty)
+    }
+
+    @Test func subscriptionsBeatPayPerToken() {
+        let openrouter: JSON = ["slug": "openrouter", "models": ["x/tiny-mini", "x/huge-pro"],
+                                "pricing": ["x/tiny-mini": ["input": "$0.05/Mtok"], "x/huge-pro": ["input": "$30/Mtok"]]]
+        let codex: JSON = ["slug": "openai-codex", "models": ["gpt-6.1-sol", "gpt-6-luna"]]
+        let copilot: JSON = ["slug": "copilot", "models": ["claude-haiku-5.5", "claude-opus-4.8-fast", "claude-opus-5.5",
+                                                           "gpt-5.4-mini-free-auto", "gpt-5.4-mini", "gpt-6.1-sol"]]
+        var t = ModelTiers.defaults(options: ["providers": [openrouter, codex, copilot]], provider: "openai-codex", model: "gpt-6.1-sol")
+        // Nearest the chat model, then the shorter name; the newest opus for heavy.
+        #expect(t[.light] == TierModel(model: "gpt-5.4-mini", provider: "copilot"))
+        #expect(t[.heavy] == TierModel(model: "claude-opus-5.5", provider: "copilot"))
+
+        // Quota windows mark an unknown provider as a subscription, ahead of a later known one.
+        let plan: JSON = ["slug": "my-plan", "usage": ["windows": []], "models": ["plan-flash"]]
+        t = ModelTiers.defaults(options: ["providers": [openrouter, plan, copilot]], provider: "openrouter", model: "x/a")
+        #expect(t[.light] == TierModel(model: "plan-flash", provider: "my-plan"))
+
+        // No subscription has a heavy model, so the pay-per-token side supplies it, by price.
+        let flat: JSON = ["slug": "zai", "models": ["glm-5-flash"]]
+        t = ModelTiers.defaults(options: ["providers": [openrouter, flat, ["slug": "signed-out", "authenticated": false, "models": ["z-max"]]]],
+                                provider: "zai", model: "glm-5")
+        #expect(t[.light] == TierModel(model: "glm-5-flash", provider: "zai"))
+        #expect(t[.heavy] == TierModel(model: "x/huge-pro", provider: "openrouter"))
+        #expect(ModelTiers.isSubscription(["slug": "anthropic", "auth_type": "oauth_external"]))
+        #expect(!ModelTiers.isSubscription(["slug": "openrouter"]))
     }
 
     @Test func storedOverrides() {
