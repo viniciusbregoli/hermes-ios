@@ -74,13 +74,20 @@ struct ChatView: View {
                 else if store.items.isEmpty { EmptyChat(name: botName) }
             }
             .overlay(alignment: .bottom) {
-                WorkingControls(running: store.running, startedAt: store.turnStartedAt,
-                                showScrollToEnd: !following && !rows.isEmpty) {
-                    Task { await store.interrupt() }
-                } scrollToEnd: {
-                    following = ScrollFollow.next(following, .reset)
-                    toEnd(proxy)
+                VStack(spacing: 0) {
+                    SteerToast(store: store)
+                    HStack(alignment: .bottom, spacing: 8) {
+                        WorkingControls(running: store.running, startedAt: store.turnStartedAt,
+                                        showScrollToEnd: !following && !rows.isEmpty) {
+                            Task { await store.interrupt() }
+                        } scrollToEnd: {
+                            following = ScrollFollow.next(following, .reset)
+                            toEnd(proxy)
+                        }
+                        QueueChip(store: store, edit: editQueued)
+                    }
                 }
+                .animation(.easeOut(duration: 0.18), value: store.steerFeedback)
             }
             .onChange(of: atEnd) {
                 // Content growing under a follower (streaming, a late layout pass) keeps it pinned to the end.
@@ -138,15 +145,23 @@ struct ChatView: View {
                     SubagentsBar(store: store)
                     ControlsRow(store: store, draft: $draft)
                     if editing != nil { EditBanner(cancel: endEditing) }
+                    if store.queueEditing != nil { EditBanner(detail: "Updates the queued message; it still sends when the turn ends.", cancel: endEditing) }
                     AttachmentChips(store: store)
                     HStack(alignment: .bottom, spacing: 0) {
                         AttachButton(store: store)
                             .padding([.leading, .bottom], 10)
                             .disabled(store.gateway.status != .online)
-                        Composer(draft: $draft, focused: $composerFocused, placeholder: editing == nil ? "Message \(botName)" : "Edit message",
+                        Composer(draft: $draft, focused: $composerFocused,
+                                 placeholder: editing == nil && store.queueEditing == nil ? "Message \(botName)" : "Edit message",
                                  running: store.running, enabled: store.gateway.status == .online,
-                                 hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending) {
+                                 hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending,
+                                 button: sendButton, steer: SteerAction(run: steer(redirect:))) {
                             let text = draft
+                            if let id = store.queueEditing {
+                                store.editQueued(id, text: text)
+                                endEditing()
+                                return
+                            }
                             // An edit resends its text as written, even when it starts with a slash.
                             if let edit = editing {
                                 endEditing()
@@ -157,7 +172,8 @@ struct ChatView: View {
                             if SlashCommand(draft) != nil { return runSlash(draft) }
                             draft = ""
                             Drafts.save("", for: draftKey)
-                            pinNext = true
+                            // A queued message joins the transcript only when it is sent.
+                            pinNext = !store.running
                             Notifier.shared.prepare()
                             let note = bots?.mentionNote(for: text, excluding: activeBot) ?? ""
                             Task { await store.send(text, note: note) }
@@ -234,7 +250,8 @@ struct ChatView: View {
         var out: [MessageAction] = []
         if store.canEdit(item) {
             out.append(MessageAction(title: "Edit and resend", icon: "pencil") {
-                if editing == nil { setAside = draft }
+                if editing == nil, store.queueEditing == nil { setAside = draft }
+                store.queueEditing = nil
                 editing = item
                 draft = item.text
                 composerFocused = true
@@ -256,8 +273,30 @@ struct ChatView: View {
 
     private func endEditing() {
         editing = nil
+        store.queueEditing = nil
         draft = setAside
         setAside = ""
+    }
+
+    private func editQueued(_ m: QueuedMessage) {
+        if editing == nil, store.queueEditing == nil { setAside = draft }
+        editing = nil
+        store.queueEditing = m.id
+        draft = m.text
+        composerFocused = true
+    }
+
+    private var sendButton: SendButton {
+        SendButton(draft: draft, running: store.running, online: store.gateway.status == .online,
+                   hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending,
+                   editingQueued: store.queueEditing != nil, editingSent: editing != nil)
+    }
+
+    private func steer(redirect: Bool) {
+        let text = draft
+        draft = ""
+        Drafts.save("", for: draftKey)
+        Task { await store.steer(text, redirect: redirect) }
     }
 
     private func toEnd(_ proxy: ScrollViewProxy) {
@@ -434,11 +473,11 @@ struct Composer: View {
     var hasAttachments = false
     /// An attachment is still uploading or failed; sending now would leave it behind.
     var attaching = false
+    /// The chat's send-button state; rooms leave it nil and always send.
+    var button: SendButton?
+    /// Offered on a long press while `button` can steer.
+    var steer: SteerAction?
     let send: () -> Void
-
-    private var canSend: Bool {
-        enabled && !attaching && (hasAttachments || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -449,13 +488,32 @@ struct Composer: View {
                 .padding(.vertical, 8)
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(focused.wrappedValue ? Theme.primary : Theme.border))
             // Stop lives on the floating working capsule.
+            let b = button ?? SendButton(draft: draft, running: false, online: enabled, hasAttachments: hasAttachments, attaching: attaching)
+            let steerNow = b.canSteer ? steer : nil
             Button(action: send) {
-                Image(systemName: "arrow.up").frame(width: 34, height: 34).foregroundStyle(Theme.onPrimary)
+                Image(systemName: b.icon).frame(width: 34, height: 34).foregroundStyle(Theme.onPrimary)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!canSend)
+            .disabled(!b.enabled)
             .keyboardShortcut(.return, modifiers: .command)
-            .help(running ? "Queue message (⌘↩)" : "Send (⌘↩)")
+            .contextMenu {
+                if let steerNow {
+                    Button("Steer now", systemImage: "arrow.turn.left.up") { steerNow.run(false) }
+                    Button("Redirect", systemImage: "arrow.uturn.backward") { steerNow.run(true) }
+                }
+            }
+            .background {
+                // The long-press menu's keyboard way in.
+                if let steerNow {
+                    Button("Steer now") { steerNow.run(false) }
+                        .keyboardShortcut(.return, modifiers: [.command, .shift])
+                        .opacity(0)
+                        .accessibilityHidden(true)
+                }
+            }
+            .accessibilityLabel(button?.label ?? "Send")
+            .help(button.map { $0.canSteer ? "\($0.label) (⌘↩), hold for Steer now (⇧⌘↩)" : "\($0.label) (⌘↩)" }
+                  ?? (running ? "Queue message (⌘↩)" : "Send (⌘↩)"))
         }
         .padding(10)
     }
