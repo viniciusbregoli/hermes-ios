@@ -89,8 +89,20 @@ public struct Subagent: Identifiable, Hashable, Sendable {
     }
 
     static func toolLine(_ tool: String?, _ preview: String?) -> String? {
-        guard let tool = tool?.nonEmpty else { return compact(preview) }
+        guard let tool = tool?.nonEmpty else { return isPayload(preview) ? nil : compact(preview) }
+        // A JSON preview is the call's arguments or its result, not text: say what the call did, as the timeline does.
+        if isPayload(preview) {
+            let args = (preview?.data(using: .utf8)).flatMap { try? JSON.parse($0) }
+            let call = ToolCall(id: "", name: tool, context: "", args: args, running: false)
+            return Timeline.label(Timeline.unwrapped(call), present: false)
+        }
         return compact(preview, max: 96).map { "\(tool)(\($0))" } ?? tool
+    }
+
+    /// Text that is a serialized object or list. The gateway cuts previews short, so it may not parse.
+    static func isPayload(_ text: String?) -> Bool {
+        guard let first = text?.drop(while: \.isWhitespace).first else { return false }
+        return first == "{" || first == "["
     }
 
     static func compact(_ text: String?, max: Int = 220) -> String? {
@@ -236,6 +248,16 @@ public enum DelegateTier: String, CaseIterable, Identifiable, Sendable {
         plugin
             ? "Use your delegate_tiered tool with tier \"\(rawValue)\" for this task, then report its result: \(task)"
             : "Use your delegate_task tool to hand this task to a subagent, then report its result: \(task)"
+    }
+
+    /// What the bubble shows for a turn built by `prompt`, in this chat and when it is reloaded: the task
+    /// with its tier, not the instruction to the agent. nil for any other text.
+    static func displayed(_ text: String) -> String? {
+        let pattern = #"^Use your (?:delegate_tiered tool with tier "(\w+)" for this task|delegate_task tool to hand this task to a subagent), then report its result: ([\s\S]*)$"#
+        guard let m = try? NSRegularExpression(pattern: pattern).firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let task = Range(m.range(at: 2), in: text) else { return nil }
+        let tier = Range(m.range(at: 1), in: text).flatMap { DelegateTier(rawValue: String(text[$0])) }
+        return "Delegate\(tier.map { " (\($0.label))" } ?? ""): \(text[task])"
     }
 
     static let heavyWords = ["refactor", "design", "debug", "analyze", "analyse", "analysis", "architect", "implement",
@@ -626,7 +648,8 @@ extension ChatStore {
             }
         }
         subagents.expect(tier: tier.label)
-        await send(tier.prompt(task, plugin: plan.plugin))
+        let prompt = tier.prompt(task, plugin: plan.plugin)
+        await send(prompt, display: DelegateTier.displayed(prompt))
         if !running { await restoreDelegation() }
     }
 

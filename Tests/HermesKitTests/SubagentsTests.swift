@@ -2,6 +2,21 @@ import Foundation
 import Testing
 @testable import HermesKit
 
+struct SubagentToolLineTests {
+    @Test func jsonPreviewsBecomeAHumanLine() {
+        // The call's arguments, the way the timeline labels them.
+        #expect(Subagent.toolLine("terminal", #"{"command": "ls -la /etc"}"#) == "Ran ls")
+        #expect(Subagent.toolLine("read_file", #"{"path": "/etc/hosts"}"#) == "Read hosts")
+        // A result, whole or cut short by the gateway, has no arguments to name.
+        #expect(Subagent.toolLine("terminal", #"{"output": "C...required approval (sc"#) == "Ran command")
+        #expect(Subagent.toolLine("terminal", #"{"output": "x", "exit_code": 0}"#) == "Ran command")
+        #expect(Subagent.toolLine(nil, #"{"output": "x"}"#) == nil)
+        // Text previews are already the main argument.
+        #expect(Subagent.toolLine("terminal", "ls  /etc") == "terminal(ls /etc)")
+        #expect(Subagent.toolLine("terminal", nil) == "terminal")
+    }
+}
+
 struct SubagentsTests {
     static func ev(_ id: String, _ extra: [String: JSON] = [:]) -> JSON {
         let base: [String: JSON] = ["subagent_id": .string(id), "goal": .string("goal \(id)"), "delegation_id": "d1", "parent_id": "root-agent"]

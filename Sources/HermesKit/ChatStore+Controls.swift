@@ -235,9 +235,12 @@ extension ChatStore {
         if let state = s["todo_state"] { applyTodos(state["todos"], revision: state["revision"]?.int) }
         guard let f = s["inflight"] else { return }
         // The turn's user row is persisted at submit, so it is usually already the last user message.
-        if let user = f["user"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
-           items.last(where: { $0.kind == .user })?.text.trimmingCharacters(in: .whitespacesAndNewlines) != user {
-            items.append(userItem(id: localId(), user))
+        if let user = f["user"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            let shown = userItem(id: localId(), user)
+            let last = items.last { shown.kind == .system ? $0.startsTurn : $0.kind == .user }
+            if last?.kind != shown.kind || last?.text.trimmingCharacters(in: .whitespacesAndNewlines) != shown.text.trimmingCharacters(in: .whitespacesAndNewlines) {
+                items.append(shown)
+            }
         }
         if let text = f["assistant"]?.string?.nonEmpty {
             items.append(ChatItem(id: localId(), kind: .assistant, text: text, streaming: f["streaming"]?.bool ?? running))

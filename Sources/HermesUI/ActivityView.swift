@@ -225,9 +225,13 @@ struct ActivityView: View {
         case .needsYou(.room(let a)) where a.kind == .retry: ("Stopped", Theme.destructive)
         case .needsYou: ("Approval", Theme.destructive)
         case .working: ("Working", Theme.primary)
-        case .background(.process(let p)) where p.running: ("Running", Theme.muted)
-        case .background(.process(let p)) where p.exitCode == 0: ("Exited", Theme.success)
-        case .background(.process): ("Failed", Theme.destructive)
+        case .background(.process(let p)):
+            switch p.outcome {
+            case .running: ("Running", Theme.muted)
+            case .exited: ("Exited", Theme.success)
+            case .stopped: ("Stopped", Theme.muted)
+            case .failed: ("Failed", Theme.destructive)
+            }
         case .background(.subagents): ("Subagents", Theme.muted)
         case .background: ("Background", Theme.muted)
         case .done: ("Done", Theme.success)

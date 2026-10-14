@@ -125,7 +125,7 @@ struct ToolRow: View {
                     if let summary = tool.summary, !summary.isEmpty { Block(title: "Result", text: summary) }
                     else if let result = tool.result, !result.isNull {
                         // Terminal-style results carry raw text in `output`; show it as-is instead of escaped JSON.
-                        Block(title: "Result", text: String((result["output"]?.string ?? result.pretty).prefix(4000)))
+                        Block(title: "Result", text: Timeline.clip(result["output"]?.string ?? result.pretty))
                     }
                 }
             }
@@ -402,6 +402,45 @@ struct Shimmer: ViewModifier {
                 }
         } else {
             content
+        }
+    }
+}
+
+/// A notice the gateway wrote into the chat as the user: a muted row, with what it says behind a tap.
+struct SystemNoteView: View {
+    let note: SystemNote
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: note.icon).imageScale(.small)
+                    Text(note.title)
+                    if !note.detail.isEmpty {
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .rotationEffect(.degrees(open ? 180 : 0))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(note.detail.isEmpty)
+            .accessibilityHint(note.detail.isEmpty ? "" : "Shows the details")
+            if open {
+                Text(Timeline.clip(note.detail))
+                    .font(Theme.monoSmall)
+                    .foregroundStyle(Theme.muted)
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
+            }
         }
     }
 }

@@ -22,9 +22,10 @@ public struct ToolCall: Hashable, Sendable {
 }
 
 public struct ChatItem: Identifiable, Hashable, Sendable {
-    /// `agent` is a message another bot delivered into this chat; `notice` a slash command's output
-    /// and `side` a /btw or /bg answer, both local to this app.
-    public enum Kind: Sendable { case user, agent, assistant, tool, error, notice, side }
+    /// `agent` is a message another bot delivered into this chat; `system` a notice the gateway wrote as the user
+    /// (a finished process, a routine's preamble); `notice` a slash command's output and `side` a /btw or /bg
+    /// answer, both local to this app.
+    public enum Kind: Sendable { case user, agent, system, assistant, tool, error, notice, side }
     public let id: String
     public var kind: Kind
     public var text = ""
@@ -32,12 +33,16 @@ public struct ChatItem: Identifiable, Hashable, Sendable {
     public var streaming = false
     public var tool: ToolCall?
     public var agent: AgentMessage?
+    public var system: SystemNote?
     /// Attachments on a user message.
     public var images: [ImageSource] = []
     public var files: [String] = []
     /// When the item was written (transcript timestamp) or arrived live; times turns.
     public var date: Date?
     public var slash: SlashNote?
+
+    /// Items that open a turn: what comes after one, up to the next, is that turn's work and reply.
+    public var startsTurn: Bool { kind == .user || kind == .agent || kind == .system }
 }
 
 /// When a live turn ended and whether the user stopped it.
@@ -570,7 +575,7 @@ public final class ChatStore {
 
     private func complete(_ p: JSON) {
         let text = p["text"]?.string ?? ""
-        let turnStart = items.lastIndex { $0.kind == .user } ?? -1
+        let turnStart = items.lastIndex { $0.startsTurn } ?? -1
         let streamed = items.indices.contains { $0 > turnStart && items[$0].kind == .assistant && !items[$0].text.isEmpty }
         if p["response_transformed"]?.bool == true, let i = items.lastIndex(where: { $0.kind == .assistant }), i > turnStart {
             items[i].text = text
@@ -582,7 +587,7 @@ public final class ChatStore {
         if status == "error" {
             items.append(ChatItem(id: localId(), kind: .error, text: Self.turnErrorText(p), date: Date()))
         }
-        if let start = items.last(where: { $0.kind == .user || $0.kind == .agent }) {
+        if let start = items.last(where: { $0.startsTurn }) {
             turnEnds[start.id] = TurnEnd(at: Date(), stopped: status == "interrupted")
         }
         if openerAt != nil { Task { await showOpener(final: true) } }
@@ -619,7 +624,7 @@ public final class ChatStore {
             return
         }
         // A turn that already ended filed its end under the previous turn's opener.
-        if !running, let previous = items[..<at].last(where: { $0.kind == .user || $0.kind == .agent }),
+        if !running, let previous = items[..<at].last(where: { $0.startsTurn }),
            let end = turnEnds.removeValue(forKey: previous.id) {
             turnEnds[item.id] = end
         }
@@ -632,7 +637,7 @@ public final class ChatStore {
     func missingOpener(in messages: [JSON], before index: Int) -> ChatItem? {
         guard let row = messages.last(where: { $0["role"]?.string == "user" }), let rowId = row["row_id"]?.int,
               !items.contains(where: { self.rowId(of: $0) == rowId }), let item = item(from: row) else { return nil }
-        let shown = items.prefix(index).last { $0.kind == .user || $0.kind == .agent }
+        let shown = items.prefix(index).last { $0.startsTurn }
         if let shown, shown.id.hasPrefix("local-"), shown.text == item.text { return nil }
         return item
     }
@@ -677,6 +682,11 @@ public final class ChatStore {
         let text = m["text"]?.string ?? m["content"]?.string ?? ""
         switch m["role"]?.string {
         case "user":
+            let kind = m["display_kind"]?.string
+            if Harness.isHidden(text, kind: kind) { return nil }
+            if let note = Harness.note(text: text, kind: kind, metadata: m["display_metadata"]) {
+                return ChatItem(id: "row-\(rowId)", kind: .system, text: note.title, system: note)
+            }
             if let agent = AgentMessage.parse(text) {
                 return ChatItem(id: "row-\(rowId)", kind: .agent, text: agent.body, agent: agent)
             }

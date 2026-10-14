@@ -186,3 +186,35 @@ struct TurnTrackingTests {
         #expect(store.unread.isEmpty)
     }
 }
+
+struct ClipTests {
+    @Test func shortOutputIsUntouched() {
+        #expect(Timeline.clip("a\nb", limit: 10) == "a\nb")
+        #expect(Timeline.clip("12345\n", limit: 5) == "12345\n")
+    }
+
+    @Test func cutsAtALineBoundaryAndCountsTheRest() {
+        let text = (1...10).map(String.init).joined(separator: "\n")
+        // The limit lands inside "5", so that line is dropped whole.
+        #expect(Timeline.clip(text, limit: 8) == "1\n2\n3\n4\n\u{2026} 6 more lines")
+        // A limit that lands on a line end keeps that line.
+        #expect(Timeline.clip(text, limit: 9) == "1\n2\n3\n4\n5\n\u{2026} 5 more lines")
+        #expect(Timeline.clip("1\n2\n3\n", limit: 2) == "1\n\u{2026} 2 more lines")
+        #expect(Timeline.clip("1\n2\n3", limit: 4) == "1\n2\n\u{2026} 1 more line")
+    }
+
+    @Test func aSeqRunEndsOnAWholeNumber() {
+        let text = (1...3000).map(String.init).joined(separator: "\n")
+        let clipped = Timeline.clip(text)
+        let lines = clipped.components(separatedBy: "\n")
+        #expect(clipped.count < 4100)
+        #expect(lines.dropLast().last.flatMap(Int.init) != nil)
+        let shown = lines.count - 1
+        #expect(lines.last == "\u{2026} \(3000 - shown) more lines")
+    }
+
+    @Test func aSingleHugeLineIsCutWhereItStands() {
+        let clipped = Timeline.clip(String(repeating: "x", count: 50), limit: 20)
+        #expect(clipped == String(repeating: "x", count: 20) + "\n\u{2026} 30 more characters")
+    }
+}

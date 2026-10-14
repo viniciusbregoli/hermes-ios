@@ -74,6 +74,15 @@ public struct BackgroundProcess: Hashable, Sendable {
     /// Set once it exited (nil while running, or if the server doesn't know when).
     public var exitedAt: Date?
     public var exitCode: Int?
+    /// Why it ended ("killed" after a Kill), when the server says.
+    public var completionReason: String?
+    /// The user stopped it; a SIGTERM exit reads the same when the server sends no reason.
+    public var killed: Bool { completionReason == "killed" || exitCode == -15 }
+
+    public enum Outcome: Sendable { case running, exited, stopped, failed }
+    public var outcome: Outcome {
+        if running { .running } else if killed { .stopped } else if exitCode == 0 { .exited } else { .failed }
+    }
     /// The last few thousand characters of its output.
     public var outputTail: String
 
@@ -81,9 +90,22 @@ public struct BackgroundProcess: Hashable, Sendable {
         running || exitedAt.map { now.timeIntervalSince($0) < Self.exitedWindow } ?? false
     }
 
-    /// Processes started on a pty write color codes, which would show as stray brackets.
+    /// Terminal escape sequences: OSC (window title, cwd, prompt marks), DCS/APC/PM/SOS strings, CSI with its
+    /// private parameters and intermediates (colors, bracketed paste, keyboard protocols) and the one- or
+    /// two-character escapes. A string cut off before its terminator runs to the end of the text.
+    private static let escapes = try! NSRegularExpression(
+        pattern: #"\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\|\z)|[PX^_][^\x1B]*(?:\x1B\\|\z)|\[[0-?]*[ -/]*[@-~]|[ -/]*[0-~])"#)
+    /// What is left of the control range, except newline and tab, and the private-use glyphs (powerline, nerd
+    /// fonts, in the BMP and the supplementary planes) a prompt draws with, which have no glyph here and show as boxes.
+    private static let strays = try! NSRegularExpression(pattern: #"[\x00-\x08\x0B-\x1F\x7F\x{E000}-\x{F8FF}\x{F0000}-\x{10FFFD}]"#)
+
+    /// Processes started on a pty write prompts and color codes, which would show as stray brackets and boxes.
     static func stripEscapes(_ s: String) -> String {
-        s.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+        var text = s.replacingOccurrences(of: "\r\n", with: "\n")
+        for re in [escapes, strays] {
+            text = re.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
+        }
+        return text
     }
 
     static func parse(_ rows: JSON?, session: String, now: Date) -> [BackgroundProcess] {
@@ -94,6 +116,7 @@ public struct BackgroundProcess: Hashable, Sendable {
                                      running: r["status"]?.string == "running",
                                      startedAt: now.addingTimeInterval(-(r["uptime_seconds"]?.double ?? 0)),
                                      exitedAt: exited > 0 ? Date(timeIntervalSince1970: exited) : nil, exitCode: r["exit_code"]?.int,
+                                     completionReason: r["completion_reason"]?.string,
                                      outputTail: stripEscapes(r["output_tail"]?.string ?? r["output_preview"]?.string ?? ""))
         }
     }

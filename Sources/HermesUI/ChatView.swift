@@ -454,6 +454,8 @@ struct ItemView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         case .agent:
             if let agent = item.agent { AgentNotice(message: agent, bots: bots) }
+        case .system:
+            if let note = item.system { SystemNoteView(note: note) }
         case .assistant:
             // Reasoning is drawn by the timeline's work groups.
             if !item.text.isEmpty {
