@@ -130,27 +130,45 @@ struct MainView: View {
     let bots: BotStore
     @Binding var showSettings: Bool
     @State private var selection: String?
+    @State private var query = ""
+    @State private var searching = false
+    @State private var search = SearchState()
+    @State private var renaming: SessionRow?
+    @State private var showArchived = false
 
     static let newChat = "__new__"
 
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                ForEach(store.sessions) { s in
-                    SessionRowView(session: s, unread: store.unread.contains(s.id)).tag(s.id)
-                        .listRowBackground(Theme.sidebar)
-                        .swipeActions {
-                            Button("Delete", role: .destructive) { Task { await store.delete(s.id) } }
-                        }
+                if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    SearchResults(state: search, query: query) { SearchHitRow(hit: $0).tag($0.id) }
+                } else {
+                    if !store.pinnedSessions.isEmpty {
+                        Section("Pinned") { rows(store.pinnedSessions) }
+                    }
+                    Section {
+                        rows(store.unpinnedSessions)
+                    } header: {
+                        if !store.pinnedSessions.isEmpty { Text("Chats") }
+                    }
+                    if store.sessionsLoaded { ArchivedEntry(shown: $showArchived) }
                 }
             }
             .overlay {
-                if store.sessions.isEmpty, store.sessionsLoaded {
+                if store.sessions.isEmpty, store.sessionsLoaded, query.isEmpty {
                     ContentUnavailableView("No chats yet", systemImage: "bubble.left.and.text.bubble.right")
                 }
             }
             .themedList()
+            .searchable(text: $query, isPresented: $searching, prompt: "Search messages")
+            .searchFetch(store, query, into: $search)
             .refreshable { await store.refreshSessions() }
+            .renameAlert(store, $renaming)
+            .sheet(isPresented: $showArchived) { ArchivedChats(store: store) { selection = $0 } }
+            .background {
+                Button("Search") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden()
+            }
             .navigationTitle("Hermes")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -176,13 +194,25 @@ struct MainView: View {
         .onChange(of: selection) { _, id in
             guard let id else { return }
             let stored = id == Self.newChat ? nil : id
-            if stored != nil, stored == store.selectedId, store.runtimeId != nil { return }
+            if stored != nil, stored == store.selectedId, store.runtimeId != nil || store.loading { return }
             Task { await store.open(stored) }
+        }
+        // A branch opens from inside the chat; follow it so the list highlights the chat on screen.
+        .onChange(of: store.selectedId) { _, id in
+            if let id, selection != nil, selection != Self.newChat, selection != id { selection = id }
         }
         .alert("Hermes", isPresented: Binding(get: { store.alert != nil }, set: { if !$0 { store.alert = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(store.alert ?? "")
+        }
+    }
+
+    private func rows(_ sessions: [SessionRow]) -> some View {
+        ForEach(sessions) { s in
+            SessionRowView(session: s, unread: store.unread.contains(s.id)).tag(s.id)
+                .listRowBackground(Theme.sidebar)
+                .sessionActions(store, s, renaming: $renaming)
         }
     }
 

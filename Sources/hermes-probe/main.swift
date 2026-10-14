@@ -55,6 +55,18 @@ func run() async throws {
         return
     }
 
+    // `hermes-probe rest <METHOD> <path> '<json>'` prints one dashboard REST result; the JSON is the query for GET, else the body.
+    if CommandLine.arguments.count >= 4, CommandLine.arguments[1] == "rest" {
+        let method = CommandLine.arguments[2]
+        let raw = CommandLine.arguments.count > 4 ? CommandLine.arguments[4] : "{}"
+        let json = try JSONDecoder().decode([String: JSON].self, from: Data(raw.utf8))
+        let r = method == "GET"
+            ? try await gw.rest(method, CommandLine.arguments[3], query: json.compactMapValues { $0.string ?? $0.int.map(String.init) })
+            : try await gw.rest(method, CommandLine.arguments[3], body: json)
+        print(r.pretty)
+        return
+    }
+
     // `hermes-probe delete <stored-id>` removes a leftover session and exits.
     if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "delete" {
         try await ChatStore.deleteSession(CommandLine.arguments[2], via: gw)
