@@ -22,13 +22,15 @@ public struct ToolCall: Hashable, Sendable {
 }
 
 public struct ChatItem: Identifiable, Hashable, Sendable {
-    public enum Kind: Sendable { case user, assistant, tool, error }
+    /// `agent` is a message another bot delivered into this chat.
+    public enum Kind: Sendable { case user, agent, assistant, tool, error }
     public let id: String
     public var kind: Kind
     public var text = ""
     public var reasoning = ""
     public var streaming = false
     public var tool: ToolCall?
+    public var agent: AgentMessage?
 }
 
 public struct ModelProvider: Identifiable, Hashable, Sendable {
@@ -43,10 +45,20 @@ public struct ModelProvider: Identifiable, Hashable, Sendable {
 @MainActor @Observable
 public final class ChatStore {
     public let gateway: Gateway
+    /// The profile (bot) this store talks to; nil is the gateway's own profile.
+    public let profile: String?
     public private(set) var sessions: [SessionRow] = []
+    /// False until the first session list arrives, so an empty list isn't mistaken for "no chats".
+    public private(set) var sessionsLoaded = false
     /// Stored id of the open chat; nil means a new, unsent chat.
     public private(set) var selectedId: String?
     public private(set) var runtimeId: String?
+    /// Stored id of the profile's "Bot Chat" once `openBotChat` found or made it.
+    public private(set) var canonicalId: String?
+    /// Shown as the Bot Chat's title instead of its stored one.
+    public var botChatTitle: String?
+    /// Why the Bot Chat couldn't be opened; the UI offers a retry instead of creating another one.
+    public private(set) var botChatError: String?
     public private(set) var items: [ChatItem] = []
     public private(set) var loading = false
     public private(set) var running = false
@@ -60,22 +72,25 @@ public final class ChatStore {
 
     @ObservationIgnored private var nextLocalId = 0
 
-    public init(gateway: Gateway) {
+    public init(gateway: Gateway, profile: String? = nil) {
         self.gateway = gateway
-        gateway.onEvent = { [weak self] in self?.handle($0) }
-        gateway.onRequest = { [weak self] in self?.receive($0) }
-        gateway.onConnected = { [weak self] in self?.reconnected() }
+        self.profile = profile
+        gateway.listen(self, event: { [weak self] in self?.handle($0) },
+                       request: { [weak self] in self?.claim($0) ?? false },
+                       connected: { [weak self] in self?.reconnected() })
     }
 
     public var title: String {
         guard let id = selectedId else { return "New chat" }
+        if id == canonicalId, let botChatTitle { return botChatTitle }
         return sessions.first { $0.id == id }?.title.nonEmpty ?? "Chat"
     }
 
     // MARK: - Actions
 
     public func refreshSessions() async {
-        guard let r = try? await gateway.call("session.list", ["limit": 200]) else { return }
+        guard let r = try? await gateway.call("session.list", scoped(["limit": 200])) else { return }
+        sessionsLoaded = true
         sessions = (r["sessions"]?.array ?? []).compactMap { s in
             guard let id = s["id"]?.string else { return nil }
             return SessionRow(id: id, title: s["title"]?.string ?? "", preview: s["preview"]?.string ?? "",
@@ -85,6 +100,10 @@ public final class ChatStore {
     }
 
     public func open(_ storedId: String?) async {
+        do { try await load(storedId) } catch { alert = error.localizedDescription }
+    }
+
+    private func load(_ storedId: String?) async throws {
         // Re-opening the same chat (after a reconnect) keeps what's on screen until the resume lands,
         // so a failed resume doesn't blank the transcript.
         if storedId == nil || storedId != selectedId {
@@ -98,23 +117,76 @@ public final class ChatStore {
         guard let storedId else { return }
         loading = true
         defer { loading = false }
+        let snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
+        guard selectedId == storedId else { return }
+        apply(snapshot: snap)
+    }
+
+    /// Opens the profile's one "Bot Chat" (desktop plugins/hermes-bots/canonical-chat.ts). It is created
+    /// only when the server confirms none exists: a second one would fork the bot's history, so any
+    /// doubt ends in `botChatError` and a retry instead.
+    /// - Parameter known: the roster's `canonical_session` id (resolved_id first), if it has one.
+    public func openBotChat(known: String?) async {
+        botChatError = nil
         do {
-            let snap = try await gateway.call("session.resume", ["session_id": .string(storedId), "inline_images": false])
-            guard selectedId == storedId else { return }
-            apply(snapshot: snap)
+            var id = known
+            if id == nil { id = try await findBotChat(mustExist: false) }
+            if id == nil { id = try await createBotChat() }
+            canonicalId = id
+            if selectedId != id || runtimeId == nil { try await load(id) }
         } catch {
-            alert = error.localizedDescription
+            botChatError = error.localizedDescription
         }
     }
 
-    public func send(_ text: String) async {
+    private static let canonicalTitle = "Bot Chat"
+
+    /// Title lookups follow compression, so `resolved_id` is the live tip of the chat.
+    private func findBotChat(mustExist: Bool) async throws -> String? {
+        let r = try await gateway.call("session.list", scoped(["title": .string(Self.canonicalTitle), "include_hidden": true, "limit": 200]))
+        let row = (r["sessions"]?.array ?? []).first { s in
+            let root = s["root_title"]?.string?.trimmingCharacters(in: .whitespaces) ?? ""
+            return root == Self.canonicalTitle || (root.isEmpty && s["title"]?.string?.trimmingCharacters(in: .whitespaces) == Self.canonicalTitle)
+        }
+        if let row, let id = row["resolved_id"]?.string?.nonEmpty ?? row["id"]?.string { return id }
+        if mustExist { throw GatewayError.rpc(0, "Couldn't confirm this bot's Bot Chat, so no new one was started. Try again.") }
+        return nil
+    }
+
+    private func createBotChat() async throws -> String? {
+        await detach()
+        let created = try await gateway.call("session.create", scoped([
+            "title": .string(Self.canonicalTitle), "hidden": true, "follow_profile_config": true]))
+        guard let sid = created["session_id"]?.string, let stored = created["stored_session_id"]?.string else {
+            throw GatewayError.offline
+        }
+        do {
+            // session.create is lazy; titling now persists the row so the next lookup finds it.
+            _ = try await gateway.call("session.title", ["session_id": .string(sid), "title": .string(Self.canonicalTitle)])
+        } catch GatewayError.rpc(4022, _) {
+            // Another client took the title in the meantime: adopt its chat. Ours is empty and gets pruned.
+            _ = try? await gateway.call("session.close", ["session_id": .string(sid)])
+            return try await findBotChat(mustExist: true)
+        }
+        selectedId = stored
+        runtimeId = sid
+        items = []
+        requests = []
+        running = false
+        statusText = nil
+        applyInfo(created["info"])
+        return stored
+    }
+
+    /// `note` is appended to what the agent receives but not shown (the @mention note).
+    public func send(_ text: String, note: String = "") async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         do {
             let sid = try await ensureSession()
             items.append(ChatItem(id: localId(), kind: .user, text: text))
             running = true
-            _ = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(text)])
+            _ = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(text + note)])
         } catch {
             running = false
             items.append(ChatItem(id: localId(), kind: .error, text: error.localizedDescription))
@@ -129,7 +201,7 @@ public final class ChatStore {
     public func delete(_ storedId: String) async {
         if storedId == selectedId { await open(nil) }
         do {
-            try await Self.deleteSession(storedId, via: gateway)
+            try await Self.deleteSession(storedId, profile: profile, via: gateway)
             sessions.removeAll { $0.id == storedId }
         } catch {
             alert = error.localizedDescription
@@ -137,10 +209,12 @@ public final class ChatStore {
     }
 
     /// The server refuses deletes (4023) until a just-closed session finishes tearing down, so retry briefly.
-    public static func deleteSession(_ storedId: String, via gateway: Gateway) async throws {
+    public static func deleteSession(_ storedId: String, profile: String? = nil, via gateway: Gateway) async throws {
+        var params: [String: JSON] = ["session_id": .string(storedId)]
+        if let profile { params["profile"] = .string(profile) }
         for attempt in 1... {
             do {
-                _ = try await gateway.call("session.delete", ["session_id": .string(storedId)])
+                _ = try await gateway.call("session.delete", params)
                 return
             } catch GatewayError.rpc(4023, _) where attempt < 6 {
                 try await Task.sleep(for: .milliseconds(500))
@@ -185,9 +259,9 @@ public final class ChatStore {
     private func ensureSession() async throws -> String {
         if let sid = runtimeId { return sid }
         if let id = selectedId {
-            apply(snapshot: try await gateway.call("session.resume", ["session_id": .string(id), "inline_images": false]))
+            apply(snapshot: try await gateway.call("session.resume", scoped(["session_id": .string(id), "inline_images": false])))
         } else {
-            let created = try await gateway.call("session.create")
+            let created = try await gateway.call("session.create", scoped([:]))
             runtimeId = created["session_id"]?.string
             selectedId = created["stored_session_id"]?.string
             applyInfo(created["info"])
@@ -201,6 +275,13 @@ public final class ChatStore {
     public func answer(_ request: ServerRequest, result: JSON) {
         gateway.respond(request, result: result)
         requests.removeAll { $0.id == request.id }
+    }
+
+    /// Takes the requests meant for the chat on screen; other stores get the rest.
+    func claim(_ r: ServerRequest) -> Bool {
+        guard let sid = runtimeId, r.sessionId == sid else { return false }
+        receive(r)
+        return true
     }
 
     func receive(_ r: ServerRequest) {
@@ -297,7 +378,7 @@ public final class ChatStore {
         }
         running = false
         statusText = nil
-        if selectedId == nil || !sessions.contains(where: { $0.id == selectedId }) {
+        if selectedId == nil || (selectedId != canonicalId && !sessions.contains(where: { $0.id == selectedId })) {
             Task { await refreshSessions() }
         }
     }
@@ -332,7 +413,12 @@ public final class ChatStore {
         let text = m["text"]?.string ?? m["content"]?.string ?? ""
         switch m["role"]?.string {
         case "user":
-            return ChatItem(id: "row-\(rowId)", kind: .user, text: text)
+            if let agent = AgentMessage.parse(text) {
+                return ChatItem(id: "row-\(rowId)", kind: .agent, text: agent.body, agent: agent)
+            }
+            // The @mention note is for the agent; the user only typed what precedes it.
+            let shown = text.range(of: BotStore.mentionNoteStart).map { String(text[..<$0.lowerBound]) } ?? text
+            return ChatItem(id: "row-\(rowId)", kind: .user, text: shown)
         case "assistant":
             let reasoning = m["reasoning"]?.string ?? ""
             guard !text.isEmpty || !reasoning.isEmpty else { return nil }
@@ -372,10 +458,19 @@ public final class ChatStore {
     }
 
     /// Frees the server-side agent for the chat we are leaving, unless it is still working.
+    /// A Bot Chat stays open, like on the desktop: the bot may start a turn in it at any time.
     private func detach() async {
         guard let sid = runtimeId else { return }
         runtimeId = nil
-        if !running { _ = try? await gateway.call("session.close", ["session_id": .string(sid)]) }
+        if !running, selectedId != canonicalId || canonicalId == nil {
+            _ = try? await gateway.call("session.close", scoped(["session_id": .string(sid)]))
+        }
+    }
+
+    /// Session methods take `profile` to reach another profile's database; runtime ids are already scoped.
+    private func scoped(_ params: [String: JSON]) -> [String: JSON] {
+        guard let profile else { return params }
+        return params.merging(["profile": .string(profile)]) { a, _ in a }
     }
 
     private func localId() -> String {

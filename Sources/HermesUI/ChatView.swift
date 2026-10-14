@@ -3,6 +3,8 @@ import HermesKit
 
 struct ChatView: View {
     @Bindable var store: ChatStore
+    /// The roster, for @mentions and bot-to-bot notices.
+    var bots: BotStore?
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
 
@@ -11,7 +13,7 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(store.items) { item in
-                        ItemView(item: item).id(item.id)
+                        ItemView(item: item, bots: bots).id(item.id)
                     }
                     if store.running {
                         HStack(spacing: 6) {
@@ -43,11 +45,18 @@ struct ChatView: View {
                 ForEach(store.requests) { r in
                     RequestCard(request: r) { store.answer(r, result: $0) }
                 }
+                if let bots, let query = MentionPicker.query(draft) {
+                    let candidates = bots.mentionCandidates(query, excluding: activeBot)
+                    if !candidates.isEmpty {
+                        MentionPicker(candidates: candidates, bots: bots) { draft = MentionPicker.complete(draft, with: $0) }
+                    }
+                }
                 Composer(draft: $draft, focused: $composerFocused, running: store.running,
                          enabled: store.gateway.status == .online) {
                     let text = draft
                     draft = ""
-                    Task { await store.send(text) }
+                    let note = bots?.mentionNote(for: text, excluding: activeBot) ?? ""
+                    Task { await store.send(text, note: note) }
                 } stop: {
                     Task { await store.interrupt() }
                 }
@@ -62,6 +71,8 @@ struct ChatView: View {
             ToolbarItem(placement: .primaryAction) { ModelMenu(store: store) }
         }
     }
+
+    private var activeBot: String { store.profile ?? "default" }
 }
 
 struct EmptyChat: View {
@@ -77,6 +88,7 @@ struct EmptyChat: View {
 
 struct ItemView: View {
     let item: ChatItem
+    var bots: BotStore?
 
     var body: some View {
         switch item.kind {
@@ -89,6 +101,8 @@ struct ItemView: View {
                     .padding(.vertical, 8)
                     .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: Theme.radius))
             }
+        case .agent:
+            if let agent = item.agent { AgentNotice(message: agent, bots: bots) }
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {
                 if !item.reasoning.isEmpty { Reasoning(text: item.reasoning, live: item.streaming && item.text.isEmpty) }

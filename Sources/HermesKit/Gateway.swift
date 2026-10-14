@@ -41,10 +41,14 @@ public final class Gateway {
         didSet { if credentials != oldValue { Keychain.save(credentials) } }
     }
 
-    @ObservationIgnored public var onEvent: (GatewayEvent) -> Void = { _ in }
-    @ObservationIgnored public var onRequest: (ServerRequest) -> Void = { _ in }
-    /// Fires after every successful handshake, including reconnects.
-    @ObservationIgnored public var onConnected: () -> Void = {}
+    private struct Listener {
+        weak var owner: AnyObject?
+        let event: (GatewayEvent) -> Void
+        let request: (ServerRequest) -> Bool
+        let connected: () -> Void
+    }
+
+    @ObservationIgnored private var listeners: [Listener] = []
 
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var pending: [String: CheckedContinuation<JSON, Error>] = [:]
@@ -74,6 +78,25 @@ public final class Gateway {
         teardown(GatewayError.offline)
         credentials = nil
         status = .signedOut
+    }
+
+    /// Registers callbacks that live as long as `owner`. Every listener sees every event;
+    /// a server request goes to the first listener that returns true, and is rejected if none does.
+    /// `connected` fires after every successful handshake, including reconnects.
+    public func listen(_ owner: AnyObject, event: @escaping (GatewayEvent) -> Void = { _ in },
+                       request: @escaping (ServerRequest) -> Bool = { _ in false }, connected: @escaping () -> Void = {}) {
+        listeners.removeAll { $0.owner == nil || $0.owner === owner }
+        listeners.append(Listener(owner: owner, event: event, request: request, connected: connected))
+    }
+
+    func dispatch(_ event: GatewayEvent) {
+        listeners.removeAll { $0.owner == nil }
+        listeners.forEach { $0.event(event) }
+    }
+
+    func dispatch(_ request: ServerRequest) {
+        listeners.removeAll { $0.owner == nil }
+        if !listeners.contains(where: { $0.request(request) }) { reject(request) }
     }
 
     public func call(_ method: String, _ params: [String: JSON] = [:]) async throws -> JSON {
@@ -162,11 +185,11 @@ public final class Gateway {
         guard let msg = try? JSON.parse(data) else { return }
         if let method = msg["method"]?.string {
             if let id = msg["id"], !id.isNull {
-                onRequest(ServerRequest(rpcId: id, method: method, params: msg["params"] ?? .null))
+                dispatch(ServerRequest(rpcId: id, method: method, params: msg["params"] ?? .null))
             } else if method == "event", let p = msg["params"] {
                 let event = GatewayEvent(type: p["type"]?.string ?? "", sessionId: p["session_id"]?.string ?? "",
                                          payload: p["payload"] ?? .null)
-                if event.type == "gateway.ready" { handshake() } else { onEvent(event) }
+                if event.type == "gateway.ready" { handshake() } else { dispatch(event) }
             }
             return
         }
@@ -197,7 +220,8 @@ public final class Gateway {
                 Task { _ = try? await self.call("gateway.ping") }
             }
         }
-        onConnected()
+        listeners.removeAll { $0.owner == nil }
+        listeners.forEach { $0.connected() }
     }
 
     private func teardown(_ error: Error) {
