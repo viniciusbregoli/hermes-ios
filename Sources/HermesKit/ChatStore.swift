@@ -66,6 +66,8 @@ public final class ChatStore {
     public internal(set) var pinned: Set<String> = []
     /// False until the first session list arrives, so an empty list isn't mistaken for "no chats".
     public private(set) var sessionsLoaded = false
+    /// Chats being deleted: a list refresh that lands before the server is done must not bring their rows back.
+    @ObservationIgnored private var deleting: Set<String> = []
     /// Stored id of the open chat; nil means a new, unsent chat.
     public private(set) var selectedId: String?
     public private(set) var runtimeId: String? {
@@ -189,7 +191,7 @@ public final class ChatStore {
 
     func applySessions(_ r: JSON) {
         sessionsLoaded = true
-        sessions = SessionRow.parse(r["sessions"])
+        sessions = SessionRow.parse(r["sessions"]).filter { !deleting.contains($0.id) }
         let listed = Set(sessions.map(\.id))
         unread = unread.filter { listed.contains($0.key) }
     }
@@ -364,13 +366,36 @@ public final class ChatStore {
         _ = try? await gateway.call("session.interrupt", ["session_id": .string(sid)])
     }
 
-    public func delete(_ storedId: String) async {
-        if storedId == selectedId { await open(nil) }
+    /// The row goes first: a swipe has already taken it off the screen, and the list must agree before any await.
+    /// It comes back if the server refuses.
+    /// - Returns: false when the chat could not be deleted (the reason is in `alert`).
+    @discardableResult
+    public func delete(_ storedId: String) async -> Bool {
+        let at = sessions.firstIndex { $0.id == storedId }
+        let row = at.map { sessions[$0] }
+        sessions.removeAll { $0.id == storedId }
+        unread[storedId] = nil
+        deleting.insert(storedId)
+        defer { deleting.remove(storedId) }
         do {
+            if storedId == selectedId { await open(nil) }
+            await closeLive(storedId)
             try await Self.deleteSession(storedId, profile: profile, via: gateway)
-            sessions.removeAll { $0.id == storedId }
+            return true
         } catch {
+            if let row, let at, !sessions.contains(where: { $0.id == storedId }) { sessions.insert(row, at: min(at, sessions.count)) }
             alert = error.localizedDescription
+            return false
+        }
+    }
+
+    /// The server refuses to delete a chat that still has a live agent: one left mid-turn, or one it keeps open
+    /// after the app moved on. Stops its turn and closes it first.
+    private func closeLive(_ storedId: String) async {
+        guard let r = try? await gateway.call("session.active_list") else { return }
+        for live in LiveSession.parse(r["sessions"]) where live.key == storedId {
+            if live.status != "idle" { _ = try? await gateway.call("session.interrupt", ["session_id": .string(live.id)]) }
+            _ = try? await gateway.call("session.close", scoped(["session_id": .string(live.id)]))
         }
     }
 
