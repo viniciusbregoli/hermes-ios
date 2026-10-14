@@ -125,7 +125,7 @@ struct ToolRow: View {
                     if let summary = tool.summary, !summary.isEmpty { Block(title: "Result", text: summary) }
                     else if let result = tool.result, !result.isNull {
                         // Terminal-style results carry raw text in `output`; show it as-is instead of escaped JSON.
-                        Block(title: "Result", text: String((result["output"]?.string ?? result.pretty).prefix(4000)))
+                        Block(title: "Result", text: Timeline.clip(result["output"]?.string ?? result.pretty))
                     }
                 }
             }

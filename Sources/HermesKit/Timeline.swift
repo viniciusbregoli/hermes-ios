@@ -420,6 +420,21 @@ public enum Timeline {
 
     // MARK: - Text
 
+    /// `text` cut to at most `limit` characters at a line boundary, then a marker with the lines left out.
+    /// A single line longer than the limit is cut where it stands and the marker counts characters.
+    public static func clip(_ text: String, limit: Int = 4000) -> String {
+        guard let end = text.index(text.startIndex, offsetBy: limit, limitedBy: text.endIndex), end < text.endIndex else { return text }
+        if text[end] == "\n", text.index(after: end) == text.endIndex { return text }
+        // Searching up to `end` itself keeps a limit that lands exactly on a line end from dropping that line.
+        guard let newline = text[...end].lastIndex(of: "\n") else {
+            let left = text.distance(from: end, to: text.endIndex)
+            return "\(text[..<end])\n\u{2026} \(left) more \(left == 1 ? "character" : "characters")"
+        }
+        let rest = text[text.index(after: newline)...]
+        let lines = rest.split(separator: "\n", omittingEmptySubsequences: false).count - (rest.hasSuffix("\n") ? 1 : 0)
+        return "\(text[..<newline])\n\u{2026} \(lines) more \(lines == 1 ? "line" : "lines")"
+    }
+
     /// The first sentence of a reasoning block, or its bold heading line, as plain text (T3 liveThoughtLine).
     public static func liveThoughtLine(_ markdown: String) -> String {
         var heading: String?
