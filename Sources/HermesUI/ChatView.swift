@@ -262,7 +262,8 @@ struct Composer: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(focused.wrappedValue ? Theme.primary : Theme.border))
             if running && draft.isEmpty && !hasAttachments {
                 Button(action: stop) {
-                    Image(systemName: "stop.fill").frame(width: 34, height: 34)
+                    // The prominent style's default label color vanishes on light tints such as Matrix green.
+                    Image(systemName: "stop.fill").frame(width: 34, height: 34).foregroundStyle(Theme.background)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.foreground)
