@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import HermesKit
 
 // Chat list management (search, pins, archive, rename) and the per-message actions of a chat.
@@ -276,4 +277,46 @@ struct EditBanner: View {
         .padding(.vertical, 8)
         .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
     }
+}
+
+// MARK: - Export
+
+/// The chat's toolbar menu: Export shares the conversation as a Markdown file.
+struct ChatMenu: View {
+    let store: ChatStore
+    var assistant = "Hermes"
+
+    var body: some View {
+        Menu {
+            ShareLink(item: ChatExportFile(title: store.title, items: store.items, assistant: assistant),
+                      preview: SharePreview(store.title)) {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
+            .disabled(store.items.isEmpty)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Chat actions")
+    }
+}
+
+/// Built when the share sheet asks for it, so the transcript isn't rendered on every redraw.
+struct ChatExportFile: Transferable {
+    let title: String
+    let items: [ChatItem]
+    let assistant: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .markdownText) { doc in
+            let dir = FileManager.default.temporaryDirectory.appending(path: "hermes-export/\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appending(path: ChatExport.filename(doc.title))
+            try ChatExport.markdown(title: doc.title, items: doc.items, assistant: doc.assistant).write(to: url, atomically: true, encoding: .utf8)
+            return SentTransferredFile(url)
+        }
+    }
+}
+
+extension UTType {
+    static let markdownText = UTType(importedAs: "net.daringfireball.markdown", conformingTo: .plainText)
 }

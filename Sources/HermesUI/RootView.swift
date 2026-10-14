@@ -7,6 +7,8 @@ public struct RootView: View {
     @State private var groups: GroupStore
     @State private var tab = 0
     @State private var showSettings = false
+    /// A chat to open in the Chats tab, asked for from outside it (the Artifacts screen in Settings).
+    @State private var jump: String?
     @AppStorage("theme") private var themeId = Palette.nous.id
     @AppStorage("appearance") private var appearance = Appearance.system
     @Environment(\.scenePhase) private var scenePhase
@@ -33,7 +35,7 @@ public struct RootView: View {
                 LoginView(gateway: store.gateway)
             } else {
                 TabView(selection: $tab) {
-                    MainView(store: store, bots: bots, showSettings: $showSettings)
+                    MainView(store: store, bots: bots, showSettings: $showSettings, jump: $jump)
                         .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                         .tag(0)
                     BotsView(bots: bots, showSettings: $showSettings)
@@ -54,8 +56,12 @@ public struct RootView: View {
         .id(themeId)
         .themed(palette, appearance)
         .sheet(isPresented: $showSettings) {
-            SettingsView(gateway: store.gateway, themeId: $themeId, appearance: $appearance)
-                .id(themeId).themed(palette, appearance)
+            SettingsView(gateway: store.gateway, themeId: $themeId, appearance: $appearance) { id in
+                showSettings = false
+                tab = 0
+                jump = id
+            }
+            .id(themeId).themed(palette, appearance)
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active { store.gateway.start() }
@@ -129,12 +135,14 @@ struct MainView: View {
     @Bindable var store: ChatStore
     let bots: BotStore
     @Binding var showSettings: Bool
+    @Binding var jump: String?
     @State private var selection: String?
     @State private var query = ""
     @State private var searching = false
     @State private var search = SearchState()
     @State private var renaming: SessionRow?
     @State private var showArchived = false
+    @State private var showArtifacts = false
 
     static let newChat = "__new__"
 
@@ -166,6 +174,19 @@ struct MainView: View {
             .refreshable { await store.refreshSessions() }
             .renameAlert(store, $renaming)
             .sheet(isPresented: $showArchived) { ArchivedChats(store: store) { selection = $0 } }
+            .sheet(isPresented: $showArtifacts) {
+                NavigationStack {
+                    ArtifactsView(gateway: store.gateway) { id in
+                        showArtifacts = false
+                        selection = id
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showArtifacts = false }.keyboardShortcut(.cancelAction)
+                        }
+                    }
+                }
+            }
             .background {
                 Button("Search") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden()
             }
@@ -175,6 +196,12 @@ struct MainView: View {
                     Button { newChat() } label: { Image(systemName: "square.and.pencil") }
                         .keyboardShortcut("n", modifiers: .command)
                         .help("New chat (⌘N)")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showArtifacts = true } label: { Image(systemName: "photo.on.rectangle.angled") }
+                        .keyboardShortcut("a", modifiers: [.command, .shift])
+                        .accessibilityLabel("Artifacts")
+                        .help("Artifacts (⇧⌘A)")
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
@@ -191,6 +218,11 @@ struct MainView: View {
         }
         // The split view's detail appears and disappears unreliably, so the selection says what is on screen.
         .onChange(of: selection, initial: true) { store.onScreen = selection != nil }
+        .onChange(of: jump) { _, id in
+            guard let id else { return }
+            selection = id
+            jump = nil
+        }
         .onChange(of: selection) { _, id in
             guard let id else { return }
             let stored = id == Self.newChat ? nil : id
@@ -279,6 +311,7 @@ struct SettingsView: View {
     let gateway: Gateway
     @Binding var themeId: String
     @Binding var appearance: Appearance
+    var openChat: (String) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -306,9 +339,13 @@ struct SettingsView: View {
                 }
                 .listRowBackground(Theme.sidebar)
                 SubagentSettingsSection(gateway: gateway)
+                ReadAloudSettingsSection()
                 Section {
                     NavigationLink { RoutinesView(gateway: gateway, profile: nil) } label: {
                         Label("Routines", systemImage: "clock.arrow.circlepath")
+                    }
+                    NavigationLink { ArtifactsView(gateway: gateway, openChat: openChat) } label: {
+                        Label("Artifacts", systemImage: "photo.on.rectangle.angled")
                     }
                 }
                 .listRowBackground(Theme.sidebar)
