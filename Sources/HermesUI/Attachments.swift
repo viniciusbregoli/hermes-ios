@@ -269,6 +269,9 @@ struct AttachmentViewer: View {
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Close")
         }
+        #if os(iOS)
+        .overlay(alignment: .bottom) { if let image { ImageActionsBar(image: UIImage(cgImage: image)) } }
+        #endif
         .task { image = try? await Thumbnail.load(source, gateway, maxPixel: 4096) }
     }
 }

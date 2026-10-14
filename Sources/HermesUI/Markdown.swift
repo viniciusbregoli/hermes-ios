@@ -5,6 +5,7 @@ import QuickLook
 #endif
 #if canImport(UIKit)
 import UIKit
+import Photos
 typealias PlatformImage = UIImage
 #else
 import AppKit
@@ -264,6 +265,9 @@ struct RemoteImage: View {
                     .scaledToFit()
                     .frame(maxWidth: min(image.size.width, 480), maxHeight: 360, alignment: .leading)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+                    #if os(iOS)
+                    .imageContextMenu(image)
+                    #endif
             } else if failed {
                 Label("Couldn't load \(Media.path(from: url).map(Media.name(of:)) ?? url.lastPathComponent)", systemImage: "photo")
                     .font(.caption)
@@ -396,6 +400,9 @@ struct ImageViewer: View {
             .keyboardShortcut(.cancelAction)
             .padding()
         }
+        #if os(iOS)
+        .overlay(alignment: .bottom) { if let image { ImageActionsBar(image: image) } }
+        #endif
         .task {
             image = MediaLoader.cachedImage(url)
             if image == nil { do { image = try await MediaLoader.image(url, credentials) } catch { failed = true } }
@@ -443,6 +450,82 @@ struct ZoomableImage: UIViewRepresentable {
                 let p = g.location(in: view)
                 let size = CGSize(width: scroll.bounds.width / 3, height: scroll.bounds.height / 3)
                 scroll.zoom(to: CGRect(x: p.x - size.width / 2, y: p.y - size.height / 2, width: size.width, height: size.height), animated: true)
+            }
+        }
+    }
+}
+#endif
+
+#if os(iOS)
+enum ImageExport {
+    static func copy(_ image: UIImage) { UIPasteboard.general.image = image }
+
+    /// Returns nil when saved, otherwise a message for the user. Add-only access is enough and
+    /// never shows the rest of the library to the app.
+    static func saveToPhotos(_ image: UIImage) async -> String? {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized || status == .limited else {
+            return "Allow Hermes to add photos in Settings > Privacy & Security > Photos."
+        }
+        do {
+            try await PHPhotoLibrary.shared().performChanges { PHAssetChangeRequest.creationRequestForAsset(from: image) }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+}
+
+/// Copy and Save to Photos for a full-screen image, with ⌘C / ⌘S.
+struct ImageActionsBar: View {
+    let image: UIImage
+    @State private var note: String?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { ImageExport.copy(image); show(nil, success: "Copied") } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .keyboardShortcut("c", modifiers: .command)
+            Button { Task { show(await ImageExport.saveToPhotos(image), success: "Saved to Photos") } } label: {
+                Label("Save", systemImage: "square.and.arrow.down")
+            }
+            .keyboardShortcut("s", modifiers: .command)
+        }
+        .font(.callout.weight(.medium))
+        .buttonStyle(.bordered)
+        .tint(Theme.foreground)
+        .padding(8)
+        .background(Theme.sidebar.opacity(0.85), in: Capsule())
+        .overlay(alignment: .top) {
+            if let note {
+                Text(note).font(.caption).foregroundStyle(Theme.foreground)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Theme.sidebar, in: Capsule())
+                    .offset(y: -40)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.bottom, 24)
+    }
+
+    private func show(_ failure: String?, success: String) {
+        withAnimation { note = failure ?? success }
+        UINotificationFeedbackGenerator().notificationOccurred(failure == nil ? .success : .error)
+        Task {
+            try? await Task.sleep(for: .seconds(failure == nil ? 1.5 : 4))
+            withAnimation { note = nil }
+        }
+    }
+}
+
+extension View {
+    /// Long-press Copy Image / Save to Photos on an inline image.
+    func imageContextMenu(_ image: UIImage) -> some View {
+        contextMenu {
+            Button { ImageExport.copy(image) } label: { Label("Copy Image", systemImage: "doc.on.doc") }
+            Button { Task { _ = await ImageExport.saveToPhotos(image) } } label: {
+                Label("Save to Photos", systemImage: "square.and.arrow.down")
             }
         }
     }
