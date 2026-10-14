@@ -141,6 +141,10 @@ struct LoginView: View {
             }
             .themedList()
             .navigationTitle("Hermes")
+            // A stale error (such as "Invalid URL.") would otherwise outlive the edit that fixes it.
+            .onChange(of: serverURL) { error = nil }
+            .onChange(of: username) { error = nil }
+            .onChange(of: password) { error = nil }
         }
     }
 
