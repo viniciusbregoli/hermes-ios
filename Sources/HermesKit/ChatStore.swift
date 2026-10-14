@@ -115,6 +115,14 @@ public final class ChatStore {
     public internal(set) var usage: Usage?
     /// Messages the server queued to run after the current turn.
     public internal(set) var queued: [ChatItem] = []
+    /// Follow-ups held on this device until the running turn ends; see Queue.swift.
+    public internal(set) var queue: [QueuedMessage] = []
+    /// Set when the user stopped a turn: the queue waits for `resumeQueue` instead of sending.
+    public internal(set) var queuePaused = false
+    /// The queued message the composer is editing; the queue holds until the edit ends.
+    public var queueEditing: String? { didSet { if queueEditing == nil { drainQueue() } } }
+    /// What became of the last steer or redirect, shown briefly over the composer.
+    public var steerFeedback: String?
     /// Short labels under user messages that steered or redirected a running turn, by item id.
     public internal(set) var notes: [String: String] = [:]
     /// The user message to resend when the last turn failed with a retryable error.
@@ -213,6 +221,7 @@ public final class ChatStore {
         // Re-opening the same chat (after a reconnect) keeps what's on screen until the resume lands,
         // so a failed resume doesn't blank the transcript.
         if storedId == nil || storedId != selectedId {
+            await handOffQueue()
             await detach()
             selectedId = storedId
             items = []
@@ -293,9 +302,21 @@ public final class ChatStore {
 
     /// `note` is appended to what the agent receives but not shown (the @mention note);
     /// `display` replaces the text in the bubble (a skill command's invocation instead of its body).
+    /// While a turn runs, a text-only message is queued on this device instead (Queue.swift).
     public func send(_ text: String, note: String = "", display: String? = nil) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, !attachmentsPending else { return }
+        if running, attachments.isEmpty {
+            queue.append(QueuedMessage(id: localId(), text: text, note: note, display: display))
+            return
+        }
+        await submit(text, note: note, display: display, queued: running)
+    }
+
+    /// - Parameter queued: asks a busy server to queue the message rather than steer or redirect with it.
+    /// - Returns: false when the message didn't reach the server.
+    @discardableResult
+    func submit(_ text: String, note: String, display: String?, queued: Bool) async -> Bool {
         var sent: [Attachment] = []
         do {
             let sid = try await ensureSession()
@@ -310,15 +331,26 @@ public final class ChatStore {
             }
             running = true
             retryText = nil
-            let r = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(Attachment.promptText(text, sent) + note)])
-            if busy { placeSubmitted(bubble, status: r["status"]?.string) }
+            var params: [String: JSON] = ["session_id": .string(sid), "text": .string(Attachment.promptText(text, sent) + note)]
+            if queued { params["queued"] = true }
+            let r = try await gateway.call("prompt.submit", params)
+            let status = r["status"]?.string
+            if busy {
+                placeSubmitted(bubble, status: status)
+            } else if status == "queued" {
+                // The server started a turn of its own between our idle check and the submit.
+                items.removeAll { $0.id == bubble.id }
+                placeSubmitted(bubble, status: status)
+            }
             bindRows(r, bubble: bubble.id)
+            return true
         } catch {
             running = false
             // Still staged on the server, so a retry sends them with the same refs.
             if attachments.isEmpty { attachments = sent }
             turnStartedAt = nil
             items.append(ChatItem(id: localId(), kind: .error, text: error.localizedDescription, date: Date()))
+            return false
         }
     }
 
@@ -537,6 +569,8 @@ public final class ChatStore {
         if selectedId == nil || (selectedId != canonicalId && !sessions.contains(where: { $0.id == selectedId })) {
             Task { await refreshSessions() }
         }
+        if status == "interrupted", !queue.isEmpty { queuePaused = true }
+        drainQueue()
     }
 
     /// The server streams the reply to a turn it started (a bot delivery runs on the user role) but not

@@ -163,6 +163,10 @@ extension ChatStore {
         todoRevision = -1
         usage = nil
         queued = []
+        queue = []
+        queuePaused = false
+        queueEditing = nil
+        steerFeedback = nil
         notes = [:]
         retryText = nil
         reasoningEffort = ""
