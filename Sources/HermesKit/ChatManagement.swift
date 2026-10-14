@@ -67,9 +67,10 @@ extension SessionRow {
     static func parse(_ rows: JSON?) -> [SessionRow] {
         (rows?.array ?? []).compactMap { s in
             guard let id = s["id"]?.string else { return nil }
-            return SessionRow(id: id, title: s["title"]?.string ?? "", preview: s["preview"]?.string ?? "",
+            return SessionRow(id: id, title: s["title"]?.string ?? "", preview: Preview.clean(s["preview"]?.string ?? ""),
                               startedAt: Date(timeIntervalSince1970: s["started_at"]?.double ?? 0),
-                              messageCount: s["message_count"]?.int ?? 0)
+                              messageCount: s["message_count"]?.int ?? 0,
+                              lastActive: s["last_active"]?.double.map(Date.init(timeIntervalSince1970:)))
         }
     }
 }
@@ -126,6 +127,9 @@ public struct SearchHit: Identifiable, Hashable, Sendable {
 
 extension ChatStore {
     public var pinnedSessions: [SessionRow] { sessions.filter { pinned.contains($0.id) } }
+    /// What a list row shows under the title: the latest reply when this app has seen it, else the first prompt.
+    public func preview(of row: SessionRow) -> String { replies[row.id] ?? row.preview }
+
     public var unpinnedSessions: [SessionRow] { sessions.filter { !pinned.contains($0.id) } }
 
     /// Full-text search over every message (and titles, and ids) of this profile's chats.
@@ -135,10 +139,28 @@ extension ChatStore {
         return SearchHit.parse(try await gateway.rest("GET", "api/sessions/search", query: restScoped(["q": q, "limit": "30"])))
     }
 
-    /// `limit=1` keeps the recency page to one row; the server back-fills every pinned row past it.
+    /// A turn ended in a chat this store has no stream for (another chat was open); its row gets the unread dot.
+    func markFinished(_ id: String, at date: Date) {
+        guard profile == nil, id != selectedId, sessions.contains(where: { $0.id == id }) else { return }
+        // The gateway stamps the end a little before this app hears it.
+        if let watched = watchedEnds[id], date < watched.addingTimeInterval(5) { return }
+        unread[id] = date
+    }
+
+    /// One REST page of the most recent chats gives both the pins and the last activity (`session.list` has neither).
+    /// The server back-fills every pinned row past the page. A chat older than the page keeps its start time.
     func refreshPins() async {
-        guard let r = try? await gateway.rest("GET", "api/sessions", query: restScoped(["limit": "1", "order": "recent"])) else { return }
+        guard let r = try? await gateway.rest("GET", "api/sessions", query: restScoped(["limit": "50", "order": "recent"])) else { return }
         pinned = Self.pinnedIds(r)
+        let active = Self.lastActive(r)
+        for i in sessions.indices { if let at = active[sessions[i].id] { sessions[i].lastActive = at } }
+    }
+
+    static func lastActive(_ list: JSON) -> [String: Date] {
+        Dictionary((list["sessions"]?.array ?? []).compactMap { r in
+            guard let id = r["id"]?.string, let at = r["last_active"]?.double else { return nil }
+            return (id, Date(timeIntervalSince1970: at))
+        }) { a, _ in a }
     }
 
     static func pinnedIds(_ list: JSON) -> Set<String> {

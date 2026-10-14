@@ -162,7 +162,7 @@ struct LiveSession: Hashable, Sendable {
         (rows?.array ?? []).compactMap { r in
             guard let id = r["id"]?.string else { return nil }
             return LiveSession(id: id, key: r["session_key"]?.string ?? "", title: r["title"]?.string ?? "",
-                               preview: r["preview"]?.string ?? "", status: r["status"]?.string ?? "",
+                               preview: Preview.clean(r["preview"]?.string ?? ""), status: r["status"]?.string ?? "",
                                lastActive: Date(timeIntervalSince1970: r["last_active"]?.double ?? 0))
         }
     }
@@ -314,6 +314,14 @@ enum ActivityFold {
         return oneLine(text ?? "")
     }
 
+    private static let busy: Set<String> = ["starting", "working", "waiting"]
+
+    /// Sessions that went from busy to idle between two polls, by runtime id. One missing from the new list is
+    /// left out: it may have been closed rather than finished.
+    static func finished(before: [String: String], now: [LiveSession]) -> [LiveSession] {
+        now.filter { $0.status == "idle" && !$0.key.isEmpty && before[$0.id].map(busy.contains) == true }
+    }
+
     static func oneLine(_ s: String) -> String {
         s.split(whereSeparator: \.isNewline).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
     }
@@ -340,6 +348,8 @@ public final class ActivityStore {
     @ObservationIgnored private weak var groups: GroupStore?
     @ObservationIgnored private var poller: Task<Void, Never>?
     @ObservationIgnored private var refreshing = false
+    /// Status of each live session at the last poll, by runtime id.
+    @ObservationIgnored private var seen: [String: String] = [:]
 
     public init(gateway: Gateway, chats: ChatStore? = nil, bots: BotStore? = nil, groups: GroupStore? = nil) {
         self.gateway = gateway
@@ -397,6 +407,7 @@ public final class ActivityStore {
         }
         live = rows
         fetched = open
+        trackFinished(rows)
         // Only prompts parked before the reads: a newer one may not have been listed yet.
         gateway.withdraw(ActivityFold.stale(inbox: parked, open: open, live: Set(rows.map(\.id))))
 
@@ -414,6 +425,22 @@ public final class ActivityStore {
 
         await groups?.refresh()
         await refreshRooms(now: now)
+    }
+
+    /// Marks a chat unread when its turn ended since the last poll, and gives every chat store the live rows
+    /// and the latest replies.
+    /// A chat the Chats tab has open marks itself (and its notification) when its own event stream sees the end.
+    func trackFinished(_ rows: [LiveSession]) {
+        for row in ActivityFold.finished(before: seen, now: rows) {
+            chats?.markFinished(row.key, at: row.lastActive.timeIntervalSince1970 > 0 ? row.lastActive : Date())
+        }
+        seen = Dictionary(rows.map { ($0.id, $0.status) }) { a, _ in a }
+        let byKey = ChatLive.rows(rows)
+        let replies = rows.filter { $0.status == "idle" && !$0.key.isEmpty && !$0.preview.isEmpty }
+        for store in held {
+            if store.live != byKey { store.live = byKey }
+            for row in replies where store.replies[row.key] != row.preview { store.replies[row.key] = row.preview }
+        }
     }
 
     /// `groups.state` for rooms active in the last 10 minutes or last seen working or waiting on the user,

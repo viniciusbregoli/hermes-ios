@@ -221,7 +221,7 @@ struct BotChatsSheet: View {
                 } else {
                     Section {
                         if let id = store.canonicalId {
-                            row("Bot Chat", subtitle: "The one ongoing conversation", id: id, icon: "infinity")
+                            row("Bot Chat", subtitle: store.replies[id] ?? "The one ongoing conversation", id: id, icon: "infinity")
                         }
                         Button { pick(nil) } label: {
                             Label("New chat with \(label)", systemImage: "square.and.pencil")
@@ -244,7 +244,7 @@ struct BotChatsSheet: View {
                             Text("None yet").foregroundStyle(Theme.muted)
                         }
                         ForEach(store.pinnedSessions + store.unpinnedSessions) { s in
-                            row(s.title.nonEmpty ?? "Untitled", subtitle: s.preview, id: s.id,
+                            row(s.title.nonEmpty ?? "Untitled", subtitle: store.preview(of: s), id: s.id,
                                 icon: store.pinned.contains(s.id) ? "pin" : nil)
                                 .sessionActions(store, s, renaming: $renaming)
                         }
@@ -280,7 +280,10 @@ struct BotChatsSheet: View {
             HStack {
                 if let icon { Image(systemName: icon).foregroundStyle(Theme.primary) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.subheadline.weight(.medium)).foregroundStyle(Theme.foreground).lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(title).font(.subheadline.weight(.medium)).foregroundStyle(Theme.foreground).lineLimit(1)
+                        if let status = store.live[id]?.status { StatusPill(status: SessionRowView.pill(status)) }
+                    }
                     if !subtitle.isEmpty {
                         Text(subtitle).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
                     }

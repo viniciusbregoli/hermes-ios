@@ -298,6 +298,9 @@ struct MainView: View {
 struct SessionRowView: View {
     let session: SessionRow
     var unread = false
+    var live: ChatLive?
+    /// Replaces the first prompt when the latest reply is known.
+    var preview: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -306,19 +309,29 @@ struct SessionRowView: View {
                 Text(session.title.nonEmpty ?? "Untitled")
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
+                if let status = live?.status { StatusPill(status: Self.pill(status)) }
                 Spacer()
-                Text(session.startedAt, format: .relative(presentation: .numeric, unitsStyle: .narrow))
+                // The server's clock can run a little ahead of the phone's, which would read "in 0 sec".
+                Text(min(max(session.activity, live?.lastActive ?? .distantPast), Date().addingTimeInterval(-1)), format: .relative(presentation: .numeric, unitsStyle: .narrow))
                     .font(.caption2)
                     .foregroundStyle(Theme.muted)
             }
-            if !session.preview.isEmpty {
-                Text(session.preview)
+            if let preview = (preview ?? session.preview).nonEmpty {
+                Text(preview)
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
                     .lineLimit(2)
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// The Activity tab's pills for the same states: working in the accent, waiting in the alarm color of an approval.
+    static func pill(_ status: ChatLive.Status) -> (label: String, tint: Color) {
+        switch status {
+        case .working: ("Working", Theme.primary)
+        case .needsYou: ("Needs you", Theme.destructive)
+        }
     }
 }
 
