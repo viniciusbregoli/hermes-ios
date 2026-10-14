@@ -197,10 +197,12 @@ public enum Timeline {
         return out
     }
 
-    /// The first and last replies stay; everything between them folds into one row, unless nothing but text would.
+    /// The first and last replies stay, and slash notices; everything between them folds into one row, unless nothing but text would.
     private static func fold(_ turn: [ChatItem], body: [TimelineRow], end: TurnEnd?, expanded: Bool) -> [TimelineRow]? {
-        let replies = body.indices.filter { if case .item = body[$0] { true } else { false } }
-        let kept = Set([replies.first, replies.last].compactMap { $0 })
+        func kind(_ i: Int) -> ChatItem.Kind? { if case .item(let item) = body[i] { item.kind } else { nil } }
+        let replies = body.indices.filter { kind($0) == .assistant }
+        let notes = body.indices.filter { kind($0) == .notice || kind($0) == .side }
+        let kept = Set([replies.first, replies.last].compactMap { $0 } + notes)
         let hidden = body.indices.filter { !kept.contains($0) }
         guard let anchor = hidden.first, hidden.contains(where: { if case .work = body[$0] { true } else { false } }) else { return nil }
         let start = turn[0].date

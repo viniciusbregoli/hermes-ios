@@ -6,6 +6,7 @@ struct ChatView: View {
     /// The roster, for @mentions and bot-to-bot notices.
     var bots: BotStore?
     @State private var draft = ""
+    @State private var slash = SlashMenu()
     @FocusState private var composerFocused: Bool
     /// Settled turns the user unfolded, and work groups they opened (by group key).
     @State private var openTurns: Set<String> = []
@@ -128,6 +129,7 @@ struct ChatView: View {
                         MentionPicker(candidates: candidates, bots: bots) { draft = MentionPicker.complete(draft, with: $0) }
                     }
                 }
+                SlashPicker(store: store, menu: slash, draft: $draft, run: runSlash)
                 SubagentsBar(store: store)
                 ControlsRow(store: store, draft: $draft)
                 AttachmentChips(store: store)
@@ -138,6 +140,7 @@ struct ChatView: View {
                     Composer(draft: $draft, focused: $composerFocused, placeholder: "Message \(botName)",
                              running: store.running, enabled: store.gateway.status == .online,
                              hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending) {
+                        if SlashCommand(draft) != nil { return runSlash(draft) }
                         let text = draft
                         draft = ""
                         Drafts.save("", for: draftKey)
@@ -147,10 +150,12 @@ struct ChatView: View {
                         Task { await store.send(text, note: note) }
                     }
                 }
+                .modifier(SlashKeys(menu: slash, draft: draft))
             }
             .background(Theme.background)
         }
         .environment(store.gateway)
+        .environment(slash)
         .navigationTitle(store.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -192,6 +197,19 @@ struct ChatView: View {
             }
         case .changes(let changes):
             ChangesCard(changes: changes)
+        }
+    }
+
+    private func runSlash(_ text: String) {
+        draft = ""
+        Drafts.save("", for: draftKey)
+        Task {
+            switch await store.runSlash(text) {
+            case .done: break
+            case .newChat: await store.open(nil)
+            case .showCommands: slash.showCatalog = true
+            case .prefill(let message): draft = message
+            }
         }
     }
 
@@ -346,6 +364,8 @@ struct ItemView: View {
             Label(item.text, systemImage: "exclamationmark.triangle")
                 .font(.callout)
                 .foregroundStyle(Theme.destructive)
+        case .notice, .side:
+            SlashNoteView(item: item)
         }
     }
 }

@@ -22,8 +22,9 @@ public struct ToolCall: Hashable, Sendable {
 }
 
 public struct ChatItem: Identifiable, Hashable, Sendable {
-    /// `agent` is a message another bot delivered into this chat.
-    public enum Kind: Sendable { case user, agent, assistant, tool, error }
+    /// `agent` is a message another bot delivered into this chat; `notice` a slash command's output
+    /// and `side` a /btw or /bg answer, both local to this app.
+    public enum Kind: Sendable { case user, agent, assistant, tool, error, notice, side }
     public let id: String
     public var kind: Kind
     public var text = ""
@@ -36,6 +37,7 @@ public struct ChatItem: Identifiable, Hashable, Sendable {
     public var files: [String] = []
     /// When the item was written (transcript timestamp) or arrived live; times turns.
     public var date: Date?
+    public var slash: SlashNote?
 }
 
 /// When a live turn ended and whether the user stopped it.
@@ -236,15 +238,16 @@ public final class ChatStore {
         return stored
     }
 
-    /// `note` is appended to what the agent receives but not shown (the @mention note).
-    public func send(_ text: String, note: String = "") async {
+    /// `note` is appended to what the agent receives but not shown (the @mention note);
+    /// `display` replaces the text in the bubble (a skill command's invocation instead of its body).
+    public func send(_ text: String, note: String = "", display: String? = nil) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, !attachmentsPending else { return }
         var sent: [Attachment] = []
         do {
             let sid = try await ensureSession()
             sent = try await takeAttachments(for: sid)
-            let bubble = ChatItem(id: localId(), kind: .user, text: text, images: sent.filter(\.isImage).map { .data($0.data) },
+            let bubble = ChatItem(id: localId(), kind: .user, text: display ?? text, images: sent.filter(\.isImage).map { .data($0.data) },
                                   files: sent.filter { !$0.isImage }.map(\.name), date: Date())
             // A busy session decides where the message goes (queue, steer, redirect), so wait for its answer.
             let busy = running
@@ -495,7 +498,7 @@ public final class ChatStore {
         applySnapshotExtras(s)
     }
 
-    private func item(from m: JSON) -> ChatItem? {
+    func item(from m: JSON) -> ChatItem? {
         var item = transcriptItem(m)
         item?.date = m["timestamp"]?.double.map(Date.init(timeIntervalSince1970:))
         return item
