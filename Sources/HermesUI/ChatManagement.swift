@@ -31,6 +31,7 @@ struct SessionActions: ViewModifier {
             }
             .swipeActions(edge: .trailing) {
                 Button(role: .destructive) { delete() } label: { Label("Delete", systemImage: "trash") }
+                    .tint(Theme.destructive)
                 Button { archive() } label: { Label("Archive", systemImage: "archivebox") }
                     .tint(Theme.muted)
             }
@@ -174,6 +175,7 @@ struct ArchivedChats: View {
                 }
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) { delete(s.id) } label: { Label("Delete", systemImage: "trash") }
+                        .tint(Theme.destructive)
                 }
                 .contextMenu {
                     Button("Unarchive", systemImage: "tray.and.arrow.up") { unarchive(s.id) }
