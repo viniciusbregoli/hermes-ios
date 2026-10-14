@@ -233,9 +233,9 @@ struct MessageAttachments: View {
             ForEach(item.files, id: \.self) { FileLabel(name: $0) }
         }
         #if os(iOS)
-        .fullScreenCover(item: $zoomed) { ImageViewer(source: $0) }
+        .fullScreenCover(item: $zoomed) { AttachmentViewer(source: $0) }
         #else
-        .sheet(item: $zoomed) { ImageViewer(source: $0) }
+        .sheet(item: $zoomed) { AttachmentViewer(source: $0) }
         #endif
     }
 }
@@ -244,20 +244,24 @@ extension ImageSource: Identifiable {
     public var id: Self { self }
 }
 
-struct ImageViewer: View {
+struct AttachmentViewer: View {
     let source: ImageSource
+    @Environment(Gateway.self) private var gateway
     @Environment(\.dismiss) private var dismiss
-    @State private var scale: CGFloat = 1
+    @State private var image: CGImage?
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
-            Thumbnail(source: source, size: nil)
-                .scaleEffect(scale)
-                .gesture(MagnifyGesture().onChanged { scale = max(1, $0.magnification) }.onEnded { _ in
-                    withAnimation { scale = 1 }
-                })
-                .onTapGesture(count: 2) { withAnimation { scale = scale > 1 ? 1 : 2.5 } }
+            if let image {
+                #if os(iOS)
+                ZoomableImage(image: UIImage(cgImage: image)).ignoresSafeArea()
+                #else
+                Image(decorative: image, scale: 1).resizable().scaledToFit()
+                #endif
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             Button { dismiss() } label: {
                 Image(systemName: "xmark.circle.fill").font(.title).foregroundStyle(.white.opacity(0.8))
             }
@@ -265,14 +269,14 @@ struct ImageViewer: View {
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Close")
         }
+        .task { image = try? await Thumbnail.load(source, gateway, maxPixel: 4096) }
     }
 }
 
-/// An image from bytes we hold or from the gateway's disk. `size` crops to a square
-/// thumbnail; nil fits the whole image (full screen).
+/// A square thumbnail of an image from bytes we hold or from the gateway's disk.
 struct Thumbnail: View {
     let source: ImageSource
-    let size: CGFloat?
+    let size: CGFloat
     @Environment(Gateway.self) private var gateway
     @State private var image: CGImage?
     @State private var failed = false
@@ -280,8 +284,7 @@ struct Thumbnail: View {
     var body: some View {
         Group {
             if let image {
-                let img = Image(decorative: image, scale: 1).resizable()
-                if size == nil { img.scaledToFit() } else { img.scaledToFill() }
+                Image(decorative: image, scale: 1).resizable().scaledToFill()
             } else if failed {
                 Image(systemName: "photo").foregroundStyle(Theme.muted)
             } else {
@@ -289,31 +292,28 @@ struct Thumbnail: View {
             }
         }
         .frame(width: size, height: size)
-        .frame(maxWidth: size == nil ? .infinity : nil, maxHeight: size == nil ? .infinity : nil)
-        .background(size == nil ? Color.clear : Theme.sidebar)
+        .background(Theme.sidebar)
         .clipped()
         .task(id: source) {
-            do {
-                let data = try await bytes()
-                // 3x covers the densest screens; full screen keeps the uploaded resolution.
-                let px = size.map { Int($0 * 3) } ?? 2048
-                image = await Task.detached { ImageFile.cgImage(data, maxPixel: px) }.value
-                failed = image == nil
-            } catch {
-                failed = true
-            }
+            // 3x covers the densest screens.
+            image = try? await Self.load(source, gateway, maxPixel: Int(size * 3))
+            failed = image == nil
         }
     }
 
-    private func bytes() async throws -> Data {
+    static func load(_ source: ImageSource, _ gateway: Gateway, maxPixel: Int) async throws -> CGImage? {
+        let data: Data
         switch source {
-        case .data(let d): return d
+        case .data(let d): data = d
         case .path(let p):
-            if let hit = Self.cache.object(forKey: p as NSString) { return hit as Data }
-            let d = try await gateway.download(path: p)
-            Self.cache.setObject(d as NSData, forKey: p as NSString, cost: d.count)
-            return d
+            if let hit = cache.object(forKey: p as NSString) {
+                data = hit as Data
+            } else {
+                data = try await gateway.download(path: p)
+                cache.setObject(data as NSData, forKey: p as NSString, cost: data.count)
+            }
         }
+        return await Task.detached { ImageFile.cgImage(data, maxPixel: maxPixel) }.value
     }
 
     /// Downloaded bytes by gateway path, so scrolling back and opening full screen don't refetch.

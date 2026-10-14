@@ -180,16 +180,12 @@ extension ChatStore {
 // MARK: - Gateway files
 
 extension Gateway {
-    /// Raw bytes of a file on the gateway host, e.g. an image a past turn attached. The desktop
-    /// reads these through the same authenticated FS API instead of resuming with inline images.
+    /// Raw bytes of a file on the gateway host, e.g. an image a past turn attached. Like the desktop,
+    /// we fetch these on demand instead of resuming with inline images. Retries once after a token refresh.
     public func download(path: String) async throws -> Data {
         guard var creds = credentials else { throw GatewayError.offline }
         for attempt in 0..<2 {
-            var comps = URLComponents(url: creds.baseURL.appending(path: "api/fs/download"), resolvingAgainstBaseURL: false)!
-            comps.queryItems = [.init(name: "path", value: path)]
-            var req = URLRequest(url: comps.url!)
-            req.setValue("Bearer \(creds.accessToken)", forHTTPHeaderField: "Authorization")
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await Media.session.data(for: Media.request(path: path, credentials: creds))
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if status == 401, attempt == 0 {
                 creds = try await Auth.refresh(creds)
