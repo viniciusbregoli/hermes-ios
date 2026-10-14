@@ -31,6 +31,8 @@ struct MarkdownView: View {
     var body: some View {
         BlockView(node: Self.parse(streaming ? Markdown.stableStreamingText(text) : text))
             .foregroundStyle(Theme.foreground)
+            // Opaque, so the long-press preview doesn't show the transcript through the text.
+            .background(Theme.background)
             .modifier(MediaPresenter())
     }
 
