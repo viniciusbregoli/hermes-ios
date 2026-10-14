@@ -15,7 +15,9 @@ It's a personal project: it isn't on the App Store, and it's installed from Xcod
 - **Subagents**: a live tree per chat with a model badge for each subagent, its output, Steer and Stop, plus a Delegate action with Light / Standard / Heavy tiers (see the server plugin below).
 - **Organising**: full-text search, pins, archive, rename, edit and resend, retry, branch from any message, unread dots and notifications when a turn finishes.
 - **Routines**: Hermes cron jobs with schedules in plain words, run now, history and editing.
-- **Look**: the desktop's Nous, Catppuccin (Latte / Mocha) and Matrix themes, light and dark.
+- **Artifacts and export**: a gallery of the images and files the agent sent across recent chats, export of any chat to Markdown, and Read aloud with the Hermes voice or the on-device one.
+- **Look**: the desktop's Nous, Catppuccin (Latte / Mocha) and Matrix themes, light and dark, and a chat text size from 80% to 165%.
+- **Show touches**: a Settings toggle that draws a dot under each finger, so screen recordings of bugs show where you tapped.
 - **Keyboard**: shortcuts for the common actions when an iPad or hardware keyboard is attached (⌘N new chat, ⌘↩ send, ⌘. stop, ⌘K commands, ⌘F search, ⌘1 to ⌘3 tabs).
 
 ## Requirements
