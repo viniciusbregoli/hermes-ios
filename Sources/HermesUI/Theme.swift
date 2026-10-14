@@ -102,6 +102,7 @@ public enum Appearance: String, CaseIterable, Identifiable {
 
 /// The chat text size setting: an index into a fixed list of Dynamic Type sizes.
 /// Only the chat screens apply it (`chatTextSize()`); lists, settings and navigation keep the system size.
+/// The setting moves the chat away from the system size by its distance from 100%, so a large system size still reaches the chat.
 public enum ChatTextSize {
     public static let key = "chatTextSize"
     static let sizes: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge, .accessibility1]
@@ -111,13 +112,20 @@ public enum ChatTextSize {
     public static let standard = 3
 
     static func clamped(_ index: Int) -> Int { min(max(index, 0), sizes.count - 1) }
-    static func size(_ index: Int) -> DynamicTypeSize { sizes[clamped(index)] }
     static func label(_ index: Int) -> String { "\(percents[clamped(index)])%" }
+
+    /// The system size shifted by the setting's steps from 100%; at the default system size it is the setting's own size.
+    static func effective(_ index: Int, system: DynamicTypeSize) -> DynamicTypeSize {
+        let all = DynamicTypeSize.allCases
+        guard let at = all.firstIndex(of: system) else { return system }
+        return all[min(max(at + clamped(index) - standard, 0), all.count - 1)]
+    }
 }
 
 private struct ChatTextSizeModifier: ViewModifier {
     @AppStorage(ChatTextSize.key) private var index = ChatTextSize.standard
-    func body(content: Content) -> some View { content.dynamicTypeSize(ChatTextSize.size(index)) }
+    @Environment(\.dynamicTypeSize) private var system
+    func body(content: Content) -> some View { content.dynamicTypeSize(ChatTextSize.effective(index, system: system)) }
 }
 
 extension View {
