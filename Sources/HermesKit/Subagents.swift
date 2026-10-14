@@ -42,6 +42,8 @@ public struct Subagent: Identifiable, Hashable, Sendable {
     public var acceptingSteer = true
     /// The Delegate tier that asked for this child ("Light"), when this app started it.
     public var tier: String?
+    /// A `subagent.list` snapshot has shown it, so a later snapshot without it means it ended.
+    var listed = false
 
     static let maxActivity = 24
 
@@ -136,11 +138,22 @@ public struct SubagentRoster: Hashable, Sendable {
         if let index { items[index] = s } else { items.append(s) }
     }
 
-    /// Folds a `subagent.list` result: finished rows stay, live rows the server no longer has are dropped.
-    public mutating func reconcile(_ snapshot: JSON) {
+    /// Folds a `subagent.list` result. The server forgets a child once it ends (failures stay listed under
+    /// `delegations`), and an async child's last events can miss this chat, so a live row the server listed
+    /// before and no longer does has finished. A row it never listed only goes once it is clearly stale.
+    public mutating func reconcile(_ snapshot: JSON, now: Date = Date()) {
         let rows = snapshot["subagents"]?.array ?? []
+        let failed = snapshot["delegations"]?.array ?? []
         let ids = Set(rows.compactMap { $0["subagent_id"]?.string })
-        items.removeAll { !$0.status.isTerminal && !ids.contains($0.id) }
+        items.removeAll { !$0.status.isTerminal && !ids.contains($0.id) && !$0.listed && now.timeIntervalSince($0.startedAt) > 30 }
+        for i in items.indices where !items[i].status.isTerminal && !ids.contains(items[i].id) && items[i].listed {
+            let failure = failed.first {
+                $0["delegation_id"]?.string == items[i].delegationId && ($0["task_index"]?.int ?? 0) == items[i].taskIndex
+            }
+            items[i].status = failure == nil ? .completed : .failed
+            items[i].acceptingSteer = false
+            if let error = failure?["error"]?.string?.nonEmpty { items[i].summary = error }
+        }
         for r in rows {
             guard let id = r["subagent_id"]?.string, !retired.contains(id) else { continue }
             let index = items.firstIndex { $0.id == id }
@@ -149,6 +162,7 @@ public struct SubagentRoster: Hashable, Sendable {
             var s = index.map { items[$0] } ?? Subagent(id: id, startedAt: started ?? Date())
             s.merge(r, event: "subagent.list")
             if let started { s.startedAt = started }
+            s.listed = true
             // The roster reports the last tool started, not one in flight: seed an empty row only.
             if let tool = r["last_tool"]?.string?.nonEmpty {
                 s.lastTool = tool

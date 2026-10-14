@@ -58,22 +58,34 @@ struct SubagentsTests {
     }
 
     @Test func snapshotReconciles() {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
         var r = SubagentRoster()
-        r.apply("subagent.start", Self.ev("gone"))
-        r.apply("subagent.start", Self.ev("done"))
+        r.apply("subagent.start", Self.ev("young"), now: t0)
+        r.apply("subagent.start", Self.ev("stale"), now: t0.addingTimeInterval(-60))
+        r.apply("subagent.start", Self.ev("done"), now: t0)
         r.apply("subagent.complete", Self.ev("done", ["status": "completed"]))
         let v = r.version
         r.reconcile(["subagents": [
             ["subagent_id": "new", "goal": "fresh", "model": "m", "status": "running", "started_at": 1_800_000_000,
              "tool_count": 3, "last_tool": "read_file", "accepting_steer": true, "depth": 1, "delegation_id": "d9"],
-        ]])
-        #expect(r.items.map(\.id) == ["done", "new"])
+        ]], now: t0)
+        // A row the server never listed survives the spawn race, until it is clearly stale.
+        #expect(r.items.map(\.id) == ["young", "done", "new"])
         let n = r.item("new")
-        #expect(n?.startedAt == Date(timeIntervalSince1970: 1_800_000_000) && n?.toolCount == 3 && n?.activity == ["read_file"])
+        #expect(n?.startedAt == t0 && n?.toolCount == 3 && n?.activity == ["read_file"])
         #expect(r.version == v)
         // Re-reading the same snapshot doesn't stack activity.
-        r.reconcile(["subagents": [["subagent_id": "new", "last_tool": "read_file"]]])
+        r.reconcile(["subagents": [["subagent_id": "new", "last_tool": "read_file"]]], now: t0)
         #expect(r.item("new")?.activity == ["read_file"])
+    }
+
+    @Test func listedChildThatVanishesHasEnded() {
+        var r = SubagentRoster()
+        r.reconcile(["subagents": [Self.ev("ok", ["status": "running"]), Self.ev("bad", ["status": "running", "task_index": 1])]])
+        r.reconcile(["subagents": [], "delegations": [["delegation_id": "d1", "task_index": 1, "status": "failed", "error": "boom"]]])
+        #expect(r.item("ok")?.status == .completed)
+        #expect(r.item("bad")?.status == .failed && r.item("bad")?.summary == "boom")
+        #expect(r.active == 0)
     }
 
     @Test func treeGroupsByDelegationAndNests() {
