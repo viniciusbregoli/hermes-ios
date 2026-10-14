@@ -162,7 +162,7 @@ extension ChatStore {
         case "message.start":
             retryText = nil
             // The server runs queued messages in order, one turn each.
-            if !queued.isEmpty { items.append(ChatItem(id: localId(), kind: .user, text: queued.removeFirst())) }
+            if !queued.isEmpty { items.append(queued.removeFirst()) }
         case "todo.updated", "tool.complete":
             applyTodos(p["todos"], revision: p["revision"]?.int)
         case "session.usage":
@@ -187,20 +187,19 @@ extension ChatStore {
     }
 
     /// Where a message sent to a busy session ended up, per `prompt.submit`'s status.
-    func placeSubmitted(_ text: String, status: String?) {
+    func placeSubmitted(_ item: ChatItem, status: String?) {
         if status == "queued" {
-            queued.append(text)
+            queued.append(item)
             return
         }
-        let id = localId()
-        items.append(ChatItem(id: id, kind: .user, text: text))
-        if let note = Self.submitNote(status) { notes[id] = note }
+        items.append(item)
+        if let note = Self.submitNote(status) { notes[item.id] = note }
     }
 
     /// `session.resume` extras: the running turn's partial reply, a queued message and the todo list,
     /// so a chat reopened mid-turn looks the way it did.
     func applySnapshotExtras(_ s: JSON) {
-        queued = s["queued"]?["user"]?.string?.nonEmpty.map { [$0] } ?? []
+        queued = s["queued"]?["user"]?.string?.nonEmpty.map { [userItem(id: localId(), $0)] } ?? []
         todos = []
         todoRevision = -1
         if let state = s["todo_state"] { applyTodos(state["todos"], revision: state["revision"]?.int) }
@@ -208,7 +207,7 @@ extension ChatStore {
         // The turn's user row is persisted at submit, so it is usually already the last user message.
         if let user = f["user"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
            items.last(where: { $0.kind == .user })?.text.trimmingCharacters(in: .whitespacesAndNewlines) != user {
-            items.append(ChatItem(id: localId(), kind: .user, text: user))
+            items.append(userItem(id: localId(), user))
         }
         if let text = f["assistant"]?.string?.nonEmpty {
             items.append(ChatItem(id: localId(), kind: .assistant, text: text, streaming: f["streaming"]?.bool ?? running))

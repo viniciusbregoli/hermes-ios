@@ -80,7 +80,7 @@ struct ControlsTests {
         ])
         #expect(store.items.map(\.kind) == [.user, .assistant])
         #expect(store.items[1].text == "Working on" && store.items[1].streaming)
-        #expect(store.queued == ["and then this"])
+        #expect(store.queued.map(\.text) == ["and then this"])
         #expect(store.todos.first?.status == .inProgress)
 
         // Deltas keep extending the projected bubble; the queued message becomes the next turn.
@@ -99,9 +99,9 @@ struct ControlsTests {
     }
 
     @Test func busySubmitPlacement() {
-        store.placeSubmitted("later", status: "queued")
-        #expect(store.queued == ["later"])
-        store.placeSubmitted("actually", status: "steered")
+        store.placeSubmitted(ChatItem(id: "q1", kind: .user, text: "later"), status: "queued")
+        #expect(store.queued.map(\.text) == ["later"])
+        store.placeSubmitted(ChatItem(id: "s1", kind: .user, text: "actually"), status: "steered")
         let steered = store.items.last
         #expect(steered?.text == "actually" && store.notes[steered?.id ?? ""] == "Steered the running turn")
         #expect(ChatStore.submitNote("redirected") == "Redirected the running turn")

@@ -174,15 +174,18 @@ struct QueuedBubbles: View {
     let store: ChatStore
 
     var body: some View {
-        ForEach(Array(store.queued.enumerated()), id: \.offset) { _, text in
+        ForEach(store.queued) { item in
             VStack(alignment: .trailing, spacing: 2) {
+                if !item.images.isEmpty || !item.files.isEmpty { MessageAttachments(item: item).opacity(0.6) }
+                if !item.text.isEmpty {
                 HStack {
                     Spacer(minLength: 40)
-                    Text(text)
+                    Text(item.text)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(Theme.userBubble.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
                         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.border, style: StrokeStyle(dash: [4, 3])))
+                }
                 }
                 Label("Queued", systemImage: "clock").font(.caption2).foregroundStyle(Theme.muted)
             }

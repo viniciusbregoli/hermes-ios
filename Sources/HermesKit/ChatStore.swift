@@ -31,6 +31,9 @@ public struct ChatItem: Identifiable, Hashable, Sendable {
     public var streaming = false
     public var tool: ToolCall?
     public var agent: AgentMessage?
+    /// Attachments on a user message.
+    public var images: [ImageSource] = []
+    public var files: [String] = []
 }
 
 public struct ModelProvider: Identifiable, Hashable, Sendable {
@@ -69,13 +72,15 @@ public final class ChatStore {
     /// Approvals, clarify questions, sudo/secret prompts waiting for the user.
     public private(set) var requests: [ServerRequest] = []
     public var alert: String?
+    /// Photos and files picked in the composer for the next message.
+    public internal(set) var attachments: [Attachment] = []
 
     // Per-chat controls and live status; folded in ChatStore+Controls.swift.
     public internal(set) var todos: [TodoItem] = []
     @ObservationIgnored var todoRevision = -1
     public internal(set) var usage: Usage?
     /// Messages the server queued to run after the current turn.
-    public internal(set) var queued: [String] = []
+    public internal(set) var queued: [ChatItem] = []
     /// Short labels under user messages that steered or redirected a running turn, by item id.
     public internal(set) var notes: [String: String] = [:]
     /// The user message to resend when the last turn failed with a retryable error.
@@ -128,6 +133,7 @@ public final class ChatStore {
             selectedId = storedId
             items = []
             requests = []
+            attachments = []
             running = false
             statusText = nil
             resetControls()
@@ -199,18 +205,24 @@ public final class ChatStore {
     /// `note` is appended to what the agent receives but not shown (the @mention note).
     public func send(_ text: String, note: String = "") async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !attachments.isEmpty, !attachmentsPending else { return }
+        var sent: [Attachment] = []
         do {
             let sid = try await ensureSession()
+            sent = try await takeAttachments(for: sid)
+            let bubble = ChatItem(id: localId(), kind: .user, text: text, images: sent.filter(\.isImage).map { .data($0.data) },
+                                  files: sent.filter { !$0.isImage }.map(\.name))
             // A busy session decides where the message goes (queue, steer, redirect), so wait for its answer.
             let busy = running
-            if !busy { items.append(ChatItem(id: localId(), kind: .user, text: text)) }
+            if !busy { items.append(bubble) }
             running = true
             retryText = nil
-            let r = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(text + note)])
-            if busy { placeSubmitted(text, status: r["status"]?.string) }
+            let r = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(Attachment.promptText(text, sent) + note)])
+            if busy { placeSubmitted(bubble, status: r["status"]?.string) }
         } catch {
             running = false
+            // Still staged on the server, so a retry sends them with the same refs.
+            if attachments.isEmpty { attachments = sent }
             items.append(ChatItem(id: localId(), kind: .error, text: error.localizedDescription))
         }
     }
@@ -441,7 +453,7 @@ public final class ChatStore {
             }
             // The @mention note is for the agent; the user only typed what precedes it.
             let shown = text.range(of: BotStore.mentionNoteStart).map { String(text[..<$0.lowerBound]) } ?? text
-            return ChatItem(id: "row-\(rowId)", kind: .user, text: shown)
+            return userItem(id: "row-\(rowId)", shown)
         case "assistant":
             let reasoning = m["reasoning"]?.string ?? ""
             guard !text.isEmpty || !reasoning.isEmpty else { return nil }
