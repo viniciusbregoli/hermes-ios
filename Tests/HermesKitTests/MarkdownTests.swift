@@ -47,6 +47,15 @@ struct MediaTests {
 struct MarkdownTests {
     func kinds(_ n: MarkdownNode) -> [MarkdownNode.Kind] { n.children.map(\.kind) }
 
+    @Test func aBareListMarkerStaysVisibleText() {
+        // "4." is how a model answers "what is 2 + 2?" now and then; it parses as an empty list item.
+        for text in ["4.", "4)", "-", "  4.  "] {
+            let doc = Markdown.parse(text)
+            #expect(kinds(doc) == [.paragraph] && doc.plainText == text)
+        }
+        #expect(Markdown.parse("").children.isEmpty)
+    }
+
     @Test func blocks() {
         let doc = Markdown.parse("""
         ## Title
