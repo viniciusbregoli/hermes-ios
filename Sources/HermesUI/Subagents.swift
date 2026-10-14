@@ -356,7 +356,11 @@ struct DelegateSheet: View {
                 } header: {
                     Text("Model")
                 } footer: {
-                    Text("Hermes picks a subagent's model from the profile config, so it is switched for this delegation and put back as soon as the subagent starts.")
+                    if plan?.plugin == false {
+                        Text("Hermes picks a subagent's model from the profile config, so it is switched for this delegation and put back as soon as the subagent starts.")
+                    } else {
+                        Text("The agent runs the task through delegate_tiered on the tier's model. Change the models in Settings.")
+                    }
                 }
                 .listRowBackground(Theme.sidebar)
                 if let error {
@@ -403,10 +407,7 @@ struct DelegateSheet: View {
 
     private func modelLabel(_ t: DelegateTier) -> String {
         guard let plan else { return error == nil ? "Loading…" : "Unavailable" }
-        let model = ModelMenu.short(plan.model(for: t))
-        let values = plan.values(for: t)
-        let note = values.model.isEmpty ? " (chat model)" : values.provider.isEmpty ? "" : " via \(values.provider)"
-        return model + note + (values.reasoningEffort == "low" ? " · low effort" : "")
+        return TierLabel.text(plan.route(for: t), chatModel: plan.chatModel)
     }
 
     private func confirm() {
@@ -418,78 +419,112 @@ struct DelegateSheet: View {
     }
 }
 
+/// "gpt-6-luna · openai-codex · low effort"; a tier without a model runs on the chat's.
+enum TierLabel {
+    static func text(_ r: TierRoute, chatModel: String) -> String {
+        let model = r.model.nonEmpty.map(ModelMenu.short) ?? ModelMenu.short(chatModel).nonEmpty.map { "\($0) (chat model)" } ?? "Chat model"
+        return [model, r.provider.nonEmpty, r.reasoningEffort.nonEmpty.map { "\($0) effort" }].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
 // MARK: - Settings
 
-/// The default profile's subagent model and the model behind each Delegate tier.
+/// The model behind each Delegate tier of the default profile: its `delegation.tiers` when the server
+/// runs the delegate-tiers plugin, else the models this app picks on its own.
 struct SubagentSettingsSection: View {
     let gateway: Gateway
-    @State private var current: DelegationValues?
+    @State private var config: JSON?
     @State private var options: JSON?
     @State private var error: String?
 
     var body: some View {
+        let routes = config.flatMap(TierRoute.routes(in:))
         Section {
-            LabeledContent("Default model", value: current.map { $0.model.nonEmpty ?? "Same as the chat" } ?? (error ?? "Loading…"))
-            if let effort = current?.reasoningEffort.nonEmpty { LabeledContent("Reasoning", value: effort) }
-            ForEach(DelegateTier.allCases) { TierPicker(tier: $0, options: options) }
+            if let routes {
+                ForEach(DelegateTier.allCases) { t in
+                    TierPicker(tier: t, route: routes[t] ?? TierRoute(), options: options) { save(t, $0) }
+                }
+            } else {
+                ForEach(DelegateTier.allCases) { t in LabeledContent(t.label, value: automatic(t)) }
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(Theme.destructive) }
         } header: {
             Text("Subagents")
         } footer: {
-            Text("Delegate runs a task on one of these tiers. Automatic prefers a light or a heavy model from your subscriptions (ChatGPT, Copilot, coding plans) over pay-per-token providers; Standard keeps the profile's default.")
+            if config != nil, routes == nil {
+                Text("Delegate picks a light or a heavy model from your subscriptions (ChatGPT, Copilot, coding plans) before pay-per-token providers. Install the delegate-tiers server plugin to choose them.")
+            } else {
+                Text("Delegate and the agent itself run subagents on these tiers. Subscriptions are listed first; a tier falls back to the providers in its config when its own is out of quota.")
+            }
         }
         .listRowBackground(Theme.sidebar)
-        .task(id: gateway.status) {
-            guard gateway.status == .online, let creds = gateway.credentials else { return }
-            async let opts = try? gateway.call("model.options")
-            do { current = try await DelegationValues.get(creds, profile: nil) } catch { self.error = error.localizedDescription }
-            options = await opts
+        .task(id: gateway.status) { await load() }
+    }
+
+    private func automatic(_ t: DelegateTier) -> String {
+        guard let options else { return error == nil ? "Loading…" : "Unavailable" }
+        if t == .standard { return "Profile default" }
+        let pick = ModelTiers.defaults(options: options, provider: options["provider"]?.string ?? "", model: options["model"]?.string ?? "")[t]
+        return pick.map { "\(ModelMenu.short($0.model)) · \($0.provider)" } ?? "Chat model"
+    }
+
+    private func load() async {
+        guard gateway.status == .online, let creds = gateway.credentials else { return }
+        async let opts = try? gateway.call("model.options")
+        do { config = try await DelegationValues.config(creds, profile: nil) } catch { self.error = error.localizedDescription }
+        options = await opts
+    }
+
+    private func save(_ tier: DelegateTier, _ entry: JSON) {
+        guard let creds = gateway.credentials else { return }
+        Task {
+            do {
+                try await DelegationValues.put(tier: tier, entry, creds, profile: nil)
+                error = nil
+            } catch {
+                self.error = "Couldn't save the \(tier.label) model: \(error.localizedDescription)"
+            }
+            await load()
         }
     }
 }
 
 struct TierPicker: View {
     let tier: DelegateTier
+    let route: TierRoute
     let options: JSON?
-    @AppStorage private var stored: String
-
-    init(tier: DelegateTier, options: JSON?) {
-        self.tier = tier
-        self.options = options
-        _stored = AppStorage(wrappedValue: "", TierModel.overrideKey(tier))
-    }
-
-    private var automatic: String {
-        if tier == .standard { return "Profile default" }
-        guard let options else { return "Automatic" }
-        let provider = options["provider"]?.string ?? "", model = options["model"]?.string ?? ""
-        let pick = ModelTiers.defaults(options: options, provider: provider, model: model)[tier]
-        return "Automatic (\(pick.map { ModelMenu.short($0.model) } ?? "chat model"))"
-    }
+    let onChange: (JSON) -> Void
 
     var body: some View {
-        let providers = (options?["providers"]?.array ?? []).filter {
-            $0["authenticated"]?.bool != false && !($0["models"]?.array ?? []).isEmpty
-        }
         LabeledContent(tier.label) {
             Menu {
-                Button(automatic) { stored = "" }
-                Button("Chat model") { stored = TierModel.inherit.stored }
-                ForEach(providers.indices, id: \.self) { i in
-                    let slug = providers[i]["slug"]?.string ?? ""
-                    Menu(providers[i]["name"]?.string ?? slug) {
-                        ForEach(providers[i]["models"]?.array?.compactMap(\.string) ?? [], id: \.self) { m in
-                            Button(m) { stored = TierModel(model: m, provider: slug).stored }
+                Button { onChange(route.change(to: TierModel(model: "", provider: ""))) } label: {
+                    check("Chat model", route.model.isEmpty)
+                }
+                ForEach(Array(ModelTiers.pickerRows(options ?? .null).enumerated()), id: \.offset) { _, row in
+                    let slug = row["slug"]?.string ?? ""
+                    Menu("\(row["name"]?.string ?? slug) · \(ModelTiers.isSubscription(row) ? "subscription" : "per token")") {
+                        ForEach(row["models"]?.array?.compactMap(\.string) ?? [], id: \.self) { m in
+                            Button { onChange(route.change(to: TierModel(model: m, provider: slug))) } label: {
+                                check(m, route.model == m && route.provider == slug)
+                            }
+                        }
+                    }
+                }
+                Section("Reasoning effort") {
+                    ForEach([""] + ChatStore.reasoningEfforts, id: \.self) { level in
+                        Button { onChange(["reasoning_effort": .string(level)]) } label: {
+                            check(level.isEmpty ? "Default" : ReasoningMenu.label(level), route.reasoningEffort == level)
                         }
                     }
                 }
             } label: {
-                Text(label).lineLimit(1)
+                Text(TierLabel.text(route, chatModel: "")).lineLimit(1)
             }
         }
     }
 
-    private var label: String {
-        guard let o = TierModel(stored: stored) else { return automatic }
-        return o.model.isEmpty ? "Chat model" : ModelMenu.short(o.model)
+    @ViewBuilder private func check(_ title: String, _ on: Bool) -> some View {
+        if on { Label(title, systemImage: "checkmark") } else { Text(title) }
     }
 }

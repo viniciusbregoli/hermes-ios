@@ -164,24 +164,21 @@ struct SubagentsTests {
         #expect(!ModelTiers.isSubscription(["slug": "openrouter"]))
     }
 
-    @Test func storedOverrides() {
-        #expect(TierModel(stored: "openrouter|google/gemini-flash") == TierModel(model: "google/gemini-flash", provider: "openrouter"))
-        #expect(TierModel(stored: "|") == .inherit)
-        #expect(TierModel(stored: "") == nil)
-        #expect(TierModel(model: "m", provider: "p").stored == "p|m")
-    }
-
     @Test func planValues() {
         let current = DelegationValues(model: "", provider: "", reasoningEffort: "")
-        let plan = DelegatePlan(tiers: [.light: TierModel(model: "mini", provider: "codex"), .heavy: TierModel(model: "big", provider: "or")],
-                                current: current, chatModel: "sol", chatProvider: "codex")
+        let plan = DelegatePlan(tiers: [.light: TierRoute(model: "mini", provider: "codex", reasoningEffort: "low"),
+                                        .heavy: TierRoute(model: "big", provider: "or")],
+                                plugin: false, current: current, chatModel: "sol", chatProvider: "codex")
         #expect(plan.values(for: .light) == DelegationValues(model: "mini", provider: "", reasoningEffort: "low"))
         #expect(plan.values(for: .heavy) == DelegationValues(model: "big", provider: "or", reasoningEffort: ""))
-        // Standard without an override leaves the profile alone.
+        // Standard without a pick leaves the profile alone.
         #expect(plan.values(for: .standard) == current)
-        #expect(plan.model(for: .standard) == "sol" && plan.model(for: .light) == "mini")
-        let bare = DelegatePlan(tiers: [:], current: current, chatModel: "sol", chatProvider: "codex")
+        #expect(plan.route(for: .standard).model == "" && plan.route(for: .light).model == "mini")
+        let bare = DelegatePlan(tiers: [:], plugin: false, current: current, chatModel: "sol", chatProvider: "codex")
         #expect(bare.values(for: .light).reasoningEffort == "low" && bare.values(for: .light).model == "")
+        // With the plugin an unset tier is the chat's model, whatever delegation.model says.
+        let served = DelegatePlan(tiers: [:], plugin: true, current: DelegationValues(model: "old"), chatModel: "sol", chatProvider: "codex")
+        #expect(served.route(for: .light) == TierRoute())
     }
 
     @Test func configRequestIsScopedAndAuthorized() throws {
