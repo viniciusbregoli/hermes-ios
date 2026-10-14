@@ -63,8 +63,9 @@ public enum Theme {
     public static var success: Color { color(\.success) }
     public static var onPrimary: Color { color(\.onPrimary) }
 
-    public static let mono = Font.system(size: 12, design: .monospaced)
-    public static let monoSmall = Font.system(size: 11, design: .monospaced)
+    // Text styles rather than fixed sizes so they follow the chat text size (12pt and 11pt at the default).
+    public static let mono = Font.system(.caption, design: .monospaced)
+    public static let monoSmall = Font.system(.caption2, design: .monospaced)
     public static var radius: CGFloat { palette.radius }
 
     static func color(_ slot: KeyPath<Slots, UInt32>) -> Color {
@@ -99,7 +100,29 @@ public enum Appearance: String, CaseIterable, Identifiable {
     var scheme: ColorScheme? { self == .light ? .light : self == .dark ? .dark : nil }
 }
 
+/// The chat text size setting: an index into a fixed list of Dynamic Type sizes.
+/// Only the chat screens apply it (`chatTextSize()`); lists, settings and navigation keep the system size.
+public enum ChatTextSize {
+    public static let key = "chatTextSize"
+    static let sizes: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge, .accessibility1]
+    static let percents = [80, 90, 100, 110, 120, 135, 150, 170]
+    /// `.large`, the system default.
+    public static let standard = 3
+
+    static func clamped(_ index: Int) -> Int { min(max(index, 0), sizes.count - 1) }
+    static func size(_ index: Int) -> DynamicTypeSize { sizes[clamped(index)] }
+    static func label(_ index: Int) -> String { "\(percents[clamped(index)])%" }
+}
+
+private struct ChatTextSizeModifier: ViewModifier {
+    @AppStorage(ChatTextSize.key) private var index = ChatTextSize.standard
+    func body(content: Content) -> some View { content.dynamicTypeSize(ChatTextSize.size(index)) }
+}
+
 extension View {
+    /// Scales every text style in a chat screen to the user's chat text size.
+    func chatTextSize() -> some View { modifier(ChatTextSizeModifier()) }
+
     /// Applies the palette's colors, scheme and font treatment to a whole screen.
     func themed(_ palette: Palette, _ appearance: Appearance) -> some View {
         #if canImport(UIKit)

@@ -193,6 +193,7 @@ struct ChatView: View {
         }
         .environment(store.gateway)
         .environment(slash)
+        .chatTextSize()
         .navigationTitle(store.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

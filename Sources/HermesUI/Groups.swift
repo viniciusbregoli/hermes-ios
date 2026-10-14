@@ -343,6 +343,7 @@ struct RoomView: View {
         .background(Theme.background)
         .environment(\.credentials, store.gateway.credentials)
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+        .chatTextSize()
         .navigationTitle(store.room.name)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
