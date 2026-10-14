@@ -508,6 +508,8 @@ public enum ScrollFollow {
         /// The drag and its momentum are over.
         case dragEnded(atEnd: Bool)
         case scrolled(atEnd: Bool, dragging: Bool)
+        /// Something the user expanded or collapsed finished resizing.
+        case disclosed(atEnd: Bool, dragging: Bool)
     }
 
     public static func next(_ following: Bool, _ event: Event) -> Bool {
@@ -516,6 +518,7 @@ public enum ScrollFollow {
         case .dragBegan: false
         case .dragEnded(let atEnd): atEnd
         case .scrolled(let atEnd, let dragging): !dragging && (atEnd || following)
+        case .disclosed(let atEnd, let dragging): !dragging && atEnd
         }
     }
 }

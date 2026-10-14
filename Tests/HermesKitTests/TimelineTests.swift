@@ -138,6 +138,8 @@ struct TimelineTests {
         f = ScrollFollow.next(f, .scrolled(atEnd: true, dragging: false))
         #expect(f, "momentum reaching the end re-arms it")
         #expect(ScrollFollow.next(false, .reset))
+        #expect(!ScrollFollow.next(true, .disclosed(atEnd: false, dragging: false)), "opening a group above the end stops following")
+        #expect(ScrollFollow.next(false, .disclosed(atEnd: true, dragging: false)))
     }
 
     @Test func draftsPerChat() {

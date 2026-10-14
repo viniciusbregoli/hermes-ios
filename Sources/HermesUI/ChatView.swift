@@ -7,38 +7,111 @@ struct ChatView: View {
     var bots: BotStore?
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
+    /// Settled turns the user unfolded, and work groups they opened (by group key).
+    @State private var openTurns: Set<String> = []
+    @State private var openGroups: Set<String> = []
+    /// The live-follow latch (ScrollFollow): new output scrolls into view only while it is on.
+    @State private var following = true
+    @State private var dragging = false
+    @State private var atEnd = true
+    /// Bumped to scroll to the end (see EndScroller).
+    @State private var endRequests = 0
+    /// A group or fold is resizing because the user toggled it; it must not drag the view to the end.
+    @State private var disclosing = false
+    /// The message this view just sent; its turn starts at the top so the answer grows into view.
+    @State private var pinned: String?
+    @State private var pinNext = false
+    @Environment(\.scenePhase) private var scenePhase
+
+    private static let end = "timeline-end"
 
     var body: some View {
+        let rows = Timeline.rows(store.items, running: store.running, status: store.statusText,
+                                 ends: store.turnEnds, expanded: openTurns)
+        let split = pinned.flatMap { id in rows.firstIndex { $0.id == id } } ?? rows.count
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(store.items) { item in
-                        ItemView(item: item, bots: bots).id(item.id)
-                        ItemFooter(store: store, item: item)
-                    }
-                    QueuedBubbles(store: store)
-                    if store.running {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text(store.statusText ?? "Working…")
+                    ForEach(rows[..<split]) { row($0) }
+                    if split < rows.count {
+                        // At least a screen tall, so scrolling to the end puts the sent message at the top.
+                        ZStack(alignment: .topLeading) {
+                            Color.clear.containerRelativeFrame(.vertical) { height, _ in max(0, height - 40) }
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(rows[split...]) { row($0) }
+                                QueuedBubbles(store: store)
+                            }
                         }
-                        .font(.caption)
-                        .foregroundStyle(Theme.muted)
-                        .id("status")
+                    } else {
+                        QueuedBubbles(store: store)
                     }
+                    Color.clear.frame(height: 1).id(Self.end)
+                        .onAppear { if #unavailable(iOS 18, macOS 15) { atEnd = true } }
+                        .onDisappear { if #unavailable(iOS 18, macOS 15) { atEnd = false } }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
             }
-            .defaultScrollAnchor(.bottom)
+            .modifier(BottomAnchored())
+            .modifier(EndScroller(requests: endRequests))
+            .modifier(EndTracking { end in
+                if atEnd != end { atEnd = end }
+                // Lazy rows settle their heights after a jump, so a follower keeps going until it truly reaches the end.
+                else if !end, following, !dragging, !disclosing { toEnd(proxy) }
+            })
             .scrollDismissesKeyboard(.immediately)
+            .modifier(UserScrolling { began in
+                guard began != dragging else { return }
+                dragging = began
+                following = ScrollFollow.next(following, began ? .dragBegan : .dragEnded(atEnd: atEnd))
+            })
             .overlay {
                 if store.loading { ProgressView() }
                 else if store.items.isEmpty { EmptyChat(name: botName) }
             }
-            .onChange(of: store.items.last) { _, last in
-                guard let last else { return }
-                withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(last.id, anchor: .bottom) }
+            .overlay(alignment: .bottom) {
+                WorkingControls(running: store.running, startedAt: store.turnStartedAt,
+                                showScrollToEnd: !following && !rows.isEmpty) {
+                    Task { await store.interrupt() }
+                } scrollToEnd: {
+                    following = ScrollFollow.next(following, .reset)
+                    toEnd(proxy)
+                }
+            }
+            .onChange(of: atEnd) {
+                // Content growing under a follower (streaming, a late layout pass) keeps it pinned to the end.
+                if !atEnd, following, !dragging, !disclosing {
+                    toEnd(proxy)
+                    return
+                }
+                following = ScrollFollow.next(following, .scrolled(atEnd: atEnd, dragging: dragging))
+            }
+            .onChange(of: rows.last) {
+                guard following else { return }
+                toEnd(proxy)
+            }
+            .onChange(of: store.loading) {
+                guard !store.loading else { return }
+                following = ScrollFollow.next(following, .reset)
+                // A transcript that arrives after the view appeared misses the initial bottom anchor.
+                toEnd(proxy)
+            }
+            .onChange(of: store.items.last?.id) {
+                guard pinNext, let last = store.items.last, last.kind == .user else { return }
+                pinNext = false
+                pinned = last.id
+                following = ScrollFollow.next(following, .reset)
+                // Wait a layout pass so the pinned block has its height before scrolling to it.
+                Task { toEnd(proxy) }
+            }
+            .onChange(of: store.selectedId) { old, _ in
+                following = true
+                // A new chat getting its id on first send is still the same conversation.
+                if old != nil {
+                    pinned = nil
+                    openTurns = []
+                    openGroups = []
+                }
             }
         }
         .background(Theme.background)
@@ -61,15 +134,16 @@ struct ChatView: View {
                     AttachButton(store: store)
                         .padding([.leading, .bottom], 10)
                         .disabled(store.gateway.status != .online)
-                    Composer(draft: $draft, focused: $composerFocused, placeholder: "Message \(botName)", running: store.running,
-                             enabled: store.gateway.status == .online,
+                    Composer(draft: $draft, focused: $composerFocused, placeholder: "Message \(botName)",
+                             running: store.running, enabled: store.gateway.status == .online,
                              hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending) {
                         let text = draft
                         draft = ""
+                        Drafts.save("", for: draftKey)
+                        pinNext = true
+                        Notifier.shared.prepare()
                         let note = bots?.mentionNote(for: text, excluding: activeBot) ?? ""
                         Task { await store.send(text, note: note) }
-                    } stop: {
-                        Task { await store.interrupt() }
                     }
                 }
             }
@@ -85,10 +159,138 @@ struct ChatView: View {
             ToolbarItem(placement: .primaryAction) { ContextMeter(store: store) }
             ToolbarItem(placement: .primaryAction) { ModelMenu(store: store) }
         }
+        .onChange(of: draftKey, initial: true) { old, new in
+            if old != new { Drafts.save(draft, for: old) }
+            draft = Drafts.load(new)
+        }
+        .task(id: draft) {
+            try? await Task.sleep(for: .milliseconds(400))
+            if !Task.isCancelled { Drafts.save(draft, for: draftKey) }
+        }
+        .sensoryFeedback(.success, trigger: store.finishedTurns) { _, _ in store.visible }
+        .onDisappear { Drafts.save(draft, for: draftKey) }
+        .onChange(of: scenePhase, initial: true) { store.appActive = scenePhase == .active }
+    }
+
+    @ViewBuilder private func row(_ row: TimelineRow) -> some View {
+        switch row {
+        case .item(let item):
+            ItemView(item: item, bots: bots)
+            ItemFooter(store: store, item: item)
+        case .work(let group):
+            ActivityGroupView(group: group, open: Binding(
+                get: { openGroups.contains(group.key) },
+                set: { open in disclose { if open { openGroups.insert(group.key) } else { openGroups.remove(group.key) } } }))
+        case .fold(let fold):
+            FoldRow(fold: fold) {
+                disclose {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        if openTurns.contains(fold.turn) { openTurns.remove(fold.turn) } else { openTurns.insert(fold.turn) }
+                    }
+                }
+            }
+        case .changes(let changes):
+            ChangesCard(changes: changes)
+        }
+    }
+
+    private func toEnd(_ proxy: ScrollViewProxy) {
+        if #available(iOS 18, macOS 15, *) {
+            endRequests += 1
+        } else {
+            // A scroll requested from inside a layout or geometry callback is dropped, so wait a run-loop turn.
+            Task { @MainActor in proxy.scrollTo(Self.end, anchor: .bottom) }
+        }
+    }
+
+    /// Runs a user toggle, then decides following once the layout has settled (T3's disclosure-settled).
+    private func disclose(_ toggle: () -> Void) {
+        disclosing = true
+        toggle()
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            following = ScrollFollow.next(following, .disclosed(atEnd: atEnd, dragging: dragging))
+            disclosing = false
+        }
     }
 
     private var activeBot: String { store.profile ?? "default" }
     private var botName: String { store.profile.flatMap { bots?.bot(named: $0)?.label } ?? "Hermes" }
+    private var draftKey: String { Drafts.key(profile: store.profile, chat: store.selectedId) }
+}
+
+/// Opens at the end of the transcript; on iOS 18 only initially, so new output never drags a reader along.
+struct BottomAnchored: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18, macOS 15, *) {
+            content.defaultScrollAnchor(.bottom, for: .initialOffset)
+        } else {
+            content.defaultScrollAnchor(.bottom)
+        }
+    }
+}
+
+/// Scrolls to the end each time `requests` changes. On iOS 18 this goes through ScrollPosition, which knows the real
+/// content height; ScrollViewReader jumps to a lazy stack's estimate of where the end marker is and can stop far short.
+struct EndScroller: ViewModifier {
+    let requests: Int
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, macOS 15, *) {
+            content.modifier(PositionScroller(requests: requests))
+        } else {
+            content
+        }
+    }
+}
+
+@available(iOS 18, macOS 15, *)
+private struct PositionScroller: ViewModifier {
+    let requests: Int
+    @State private var position = ScrollPosition(edge: .bottom)
+
+    func body(content: Content) -> some View {
+        content
+            .scrollPosition($position)
+            .onChange(of: requests) { withAnimation(.easeOut(duration: 0.15)) { position.scrollTo(edge: .bottom) } }
+    }
+}
+
+/// Reports whether the end of the transcript is in view, on every change of it or of the content height.
+/// iOS 17 relies on the end marker appearing in the lazy stack instead, which lazy prefetching makes approximate.
+struct EndTracking: ViewModifier {
+    let changed: (_ atEnd: Bool) -> Void
+
+    private struct State: Equatable { var atEnd: Bool; var height: CGFloat }
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, macOS 15, *) {
+            content.onScrollGeometryChange(for: State.self) { g in
+                // visibleRect spans the insets too; its bottom minus the composer inset is the last visible content.
+                State(atEnd: g.visibleRect.maxY - g.contentInsets.bottom >= g.contentSize.height - 40, height: g.contentSize.height)
+            } action: { _, new in changed(new.atEnd) }
+        } else {
+            content
+        }
+    }
+}
+
+/// Reports a user drag starting (true) and ending with its momentum (false).
+struct UserScrolling: ViewModifier {
+    let changed: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, macOS 15, *) {
+            content.onScrollPhaseChange { _, phase in
+                if phase == .interacting { changed(true) } else if phase == .idle { changed(false) }
+            }
+        } else {
+            // ponytail: iOS 17 has no scroll phases, so a drag ends at finger lift; momentum reaching the end re-arms following.
+            content.simultaneousGesture(DragGesture(minimumDistance: 8)
+                .onChanged { _ in changed(true) }
+                .onEnded { _ in changed(false) })
+        }
+    }
 }
 
 struct EmptyChat: View {
@@ -128,113 +330,21 @@ struct ItemView: View {
         case .agent:
             if let agent = item.agent { AgentNotice(message: agent, bots: bots) }
         case .assistant:
-            VStack(alignment: .leading, spacing: 6) {
-                if !item.reasoning.isEmpty { Reasoning(text: item.reasoning, live: item.streaming && item.text.isEmpty) }
-                if !item.text.isEmpty {
-                    MarkdownView(text: item.text, streaming: item.streaming)
-                        .contextMenu {
-                            Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(MarkdownView.plainText(item.text)) }
-                            Button("Copy Markdown", systemImage: "text.document") { Clipboard.copy(item.text) }
-                        }
-                }
+            // Reasoning is drawn by the timeline's work groups.
+            if !item.text.isEmpty {
+                MarkdownView(text: item.text, streaming: item.streaming)
+                    .contextMenu {
+                        Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(MarkdownView.plainText(item.text)) }
+                        Button("Copy Markdown", systemImage: "text.document") { Clipboard.copy(item.text) }
+                    }
             }
         case .tool:
-            if let tool = item.tool { ToolRow(tool: tool) }
+            // Tool calls are drawn inside the timeline's work groups.
+            EmptyView()
         case .error:
             Label(item.text, systemImage: "exclamationmark.triangle")
                 .font(.callout)
                 .foregroundStyle(Theme.destructive)
-        }
-    }
-}
-
-struct Reasoning: View {
-    let text: String
-    let live: Bool
-    @State private var open = false
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $open) {
-            Text(text)
-                .font(.footnote)
-                .foregroundStyle(Theme.muted)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            Text(live ? "Thinking…" : "Thought")
-                .font(.footnote)
-                .foregroundStyle(Theme.muted)
-        }
-    }
-}
-
-struct ToolRow: View {
-    let tool: ToolCall
-    @State private var open = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button { withAnimation(.easeOut(duration: 0.1)) { open.toggle() } } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: Self.icon(tool.name)).frame(width: 16)
-                    Text(tool.name).fontWeight(.semibold)
-                    Text(tool.context).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    if tool.running {
-                        ProgressView().controlSize(.mini)
-                    } else if let d = tool.duration {
-                        Text(String(format: "%.1fs", d)).foregroundStyle(Theme.muted)
-                    }
-                    Image(systemName: "chevron.right")
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                        .foregroundStyle(Theme.muted)
-                }
-                .font(Theme.mono)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if open {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let args = tool.args, args.object?.isEmpty == false { Block(title: "Input", text: args.pretty) }
-                    if let diff = tool.diff, !diff.isEmpty { Block(title: "Diff", text: diff) }
-                    if let summary = tool.summary, !summary.isEmpty { Block(title: "Result", text: summary) }
-                    else if let result = tool.result, !result.isNull {
-                        // Terminal-style results carry raw text in `output`; show it as-is instead of escaped JSON.
-                        Block(title: "Result", text: String((result["output"]?.string ?? result.pretty).prefix(4000)))
-                    }
-                }
-            }
-        }
-        .foregroundStyle(Theme.foreground)
-    }
-
-    static func icon(_ name: String) -> String {
-        let n = name.lowercased()
-        if n.contains("terminal") || n.contains("shell") || n.contains("bash") { return "terminal" }
-        if n.contains("patch") || n.contains("edit") || n.contains("write") { return "pencil" }
-        if n.contains("read") || n.contains("file") { return "doc.text" }
-        if n.contains("search") || n.contains("grep") { return "magnifyingglass" }
-        if n.contains("web") || n.contains("browser") || n.contains("fetch") { return "globe" }
-        if n.contains("delegate") || n.contains("agent") { return "person.2" }
-        if n.contains("todo") { return "checklist" }
-        return "wrench.and.screwdriver"
-    }
-
-    struct Block: View {
-        let title: String
-        let text: String
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption2).foregroundStyle(Theme.muted)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    Text(text).font(Theme.monoSmall).textSelection(.enabled).fixedSize()
-                }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
-            }
         }
     }
 }
@@ -251,7 +361,6 @@ struct Composer: View {
     /// An attachment is still uploading or failed; sending now would leave it behind.
     var attaching = false
     let send: () -> Void
-    let stop: () -> Void
 
     private var canSend: Bool {
         enabled && !attaching && (hasAttachments || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -265,24 +374,14 @@ struct Composer: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(focused.wrappedValue ? Theme.primary : Theme.border))
-            if running && draft.isEmpty && !hasAttachments {
-                Button(action: stop) {
-                    // The prominent style's default label color vanishes on light tints such as Matrix green.
-                    Image(systemName: "stop.fill").frame(width: 34, height: 34).foregroundStyle(Theme.background)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.foreground)
-                .keyboardShortcut(".", modifiers: .command)
-                .help("Stop (⌘.)")
-            } else {
-                Button(action: send) {
-                    Image(systemName: "arrow.up").frame(width: 34, height: 34).foregroundStyle(Theme.onPrimary)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canSend)
-                .keyboardShortcut(.return, modifiers: .command)
-                .help(running ? "Queue message (⌘↩)" : "Send (⌘↩)")
+            // Stop lives on the floating working capsule.
+            Button(action: send) {
+                Image(systemName: "arrow.up").frame(width: 34, height: 34).foregroundStyle(Theme.onPrimary)
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canSend)
+            .keyboardShortcut(.return, modifiers: .command)
+            .help(running ? "Queue message (⌘↩)" : "Send (⌘↩)")
         }
         .padding(10)
     }
