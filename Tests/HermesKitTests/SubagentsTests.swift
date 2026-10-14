@@ -168,6 +168,11 @@ struct SubagentStoreTests {
         gateway.dispatch(GatewayEvent(type: "subagent.start", sessionId: "other", payload: SubagentsTests.ev("z")))
         #expect(store.subagents.items.map(\.id) == ["a"])
         gateway.dispatch(GatewayEvent(type: "subagent.complete", sessionId: "rt1", payload: SubagentsTests.ev("a", ["status": "completed"])))
+        // An async delegation's report turns start without a user message and keep the finished row.
+        gateway.dispatch(GatewayEvent(type: "message.start", sessionId: "rt1", payload: nil))
+        gateway.dispatch(GatewayEvent(type: "message.start", sessionId: "rt1", payload: nil))
+        #expect(store.subagents.items.count == 1)
+        store.items.append(ChatItem(id: "u2", kind: .user, text: "next"))
         gateway.dispatch(GatewayEvent(type: "message.start", sessionId: "rt1", payload: nil))
         #expect(store.subagents.isEmpty)
     }

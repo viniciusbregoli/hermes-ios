@@ -159,7 +159,7 @@ public struct SubagentRoster: Hashable, Sendable {
         }
     }
 
-    /// At a new turn the previous turn's finished rows go; children still running stay.
+    /// When the user starts a new turn, the finished rows go; children still running stay.
     public mutating func pruneFinished() {
         for s in items where s.status.isTerminal { retired.insert(s.id) }
         items.removeAll { $0.status.isTerminal }
@@ -384,7 +384,9 @@ extension ChatStore {
     func foldSubagents(_ type: String, _ p: JSON) {
         switch type {
         case "message.start":
-            subagents.pruneFinished()
+            // Only a turn the user started: an async delegation reports back in turns of its own
+            // (two message.start in a row), and those must not hide the child that just finished.
+            if items.last?.kind == .user || !queued.isEmpty { subagents.pruneFinished() }
         case "message.complete":
             // The turn ended without spawning (or after); either way the temporary model is done.
             Task { await restoreDelegation() }
