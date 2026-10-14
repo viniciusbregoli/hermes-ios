@@ -81,6 +81,8 @@ public struct SearchHit: Identifiable, Hashable, Sendable {
     public var title: String
     /// sqlite `snippet()` text; matches sit between `>>>` and `<<<`.
     public var snippet: String
+    /// Who wrote the matched message ("tool" for a call's output).
+    public var role: String?
     public var date: Date?
 
     static func parse(_ json: JSON) -> [SearchHit] {
@@ -88,12 +90,24 @@ public struct SearchHit: Identifiable, Hashable, Sendable {
             guard let id = (r["session_id"] ?? r["id"])?.string else { return nil }
             let t = (r["last_active"] ?? r["session_started"] ?? r["started_at"])?.double
             return SearchHit(id: id, title: r["title"]?.string ?? "", snippet: r["snippet"]?.string ?? "",
-                             date: t.map(Date.init(timeIntervalSince1970:)))
+                             role: r["role"]?.string, date: t.map(Date.init(timeIntervalSince1970:)))
         }
     }
 
-    /// The snippet as plain and matched runs, markers removed.
+    /// The snippet as plain and matched runs, markers removed. A tool's output or arguments, which the index
+    /// holds as serialized JSON, shrinks to a label and the words that matched.
     public var runs: [(text: String, match: Bool)] {
+        let all = markedRuns
+        let plain = all.map(\.text).joined().drop { $0.isWhitespace || $0 == "." || $0 == "\u{2026}" }
+        guard role == "tool" || Subagent.isPayload(String(plain)) else { return all }
+        let hits = all.filter(\.match)
+        guard !hits.isEmpty else { return [("Tool output", false)] }
+        return [("Tool output: ", false)] + hits.enumerated().flatMap { i, hit in
+            (i > 0 ? [(" \u{2026} ", false)] : []) + [(hit.text, true)]
+        }
+    }
+
+    private var markedRuns: [(text: String, match: Bool)] {
         var out: [(text: String, match: Bool)] = []
         var rest = Substring(snippet)
         while let open = rest.range(of: ">>>") {
