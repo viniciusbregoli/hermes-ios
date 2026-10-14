@@ -137,6 +137,8 @@ public final class ChatStore {
     @ObservationIgnored var seqEpoch: String?
     /// The open chat's live events, parked while a reconnect replay is in flight so they run after the gap.
     @ObservationIgnored var held: [GatewayEvent]?
+    /// Where a turn this app didn't send begins in `items`, until the row that opened it is shown.
+    @ObservationIgnored var openerAt: Int?
 
     @ObservationIgnored private var nextLocalId = 0
 
@@ -209,6 +211,7 @@ public final class ChatStore {
             turnStartedAt = nil
             turnEnds = [:]
             rowIds = [:]
+            openerAt = nil
             resetControls()
         }
         guard let storedId else { return }
@@ -419,6 +422,8 @@ public final class ChatStore {
             lastSeq = seq
             seqEpoch = gateway.replayEpoch
         }
+        // Started while idle with nothing queued: a bot delivery or another server-side turn.
+        let external = e.type == "message.start" && e.sessionId == runtimeId && !running && queued.isEmpty
         let p = e.payload
         if e.sessionId == runtimeId { handleControls(e.type, p) }
         if e.sessionId.isEmpty {
@@ -434,6 +439,10 @@ public final class ChatStore {
             running = true
             statusText = nil
             if turnStartedAt == nil { turnStartedAt = Date() }
+            if external {
+                openerAt = items.count
+                Task { await showOpener(final: false) }
+            }
         case "message.delta":
             appendAssistant(text: p["text"]?.string ?? "")
         case "reasoning.delta":
@@ -503,6 +512,7 @@ public final class ChatStore {
         if let start = items.last(where: { $0.kind == .user || $0.kind == .agent }) {
             turnEnds[start.id] = TurnEnd(at: Date(), stopped: status == "interrupted")
         }
+        if openerAt != nil { Task { await showOpener(final: true) } }
         running = false
         statusText = nil
         turnStartedAt = nil
@@ -515,6 +525,41 @@ public final class ChatStore {
         if selectedId == nil || (selectedId != canonicalId && !sessions.contains(where: { $0.id == selectedId })) {
             Task { await refreshSessions() }
         }
+    }
+
+    /// The server streams the reply to a turn it started (a bot delivery runs on the user role) but not
+    /// the message that opened it, so read it from the transcript. Tried at the start and, in case the row
+    /// wasn't written yet, again at the end.
+    private func showOpener(final: Bool) async {
+        guard let sid = runtimeId,
+              let r = try? await gateway.call("session.history", ["session_id": .string(sid)]),
+              runtimeId == sid else { return }
+        placeOpener(from: r["messages"]?.array ?? [], final: final)
+    }
+
+    func placeOpener(from messages: [JSON], final: Bool) {
+        guard let at = openerAt.map({ min($0, items.count) }) else { return }
+        guard let item = missingOpener(in: messages, before: at) else {
+            if final { openerAt = nil }
+            return
+        }
+        // A turn that already ended filed its end under the previous turn's opener.
+        if !running, let previous = items[..<at].last(where: { $0.kind == .user || $0.kind == .agent }),
+           let end = turnEnds.removeValue(forKey: previous.id) {
+            turnEnds[item.id] = end
+        }
+        items.insert(item, at: at)
+        openerAt = nil
+    }
+
+    /// The transcript's last user-role row, unless the chat already shows it: by row id, or as the
+    /// message this app sent just before `index`.
+    func missingOpener(in messages: [JSON], before index: Int) -> ChatItem? {
+        guard let row = messages.last(where: { $0["role"]?.string == "user" }), let rowId = row["row_id"]?.int,
+              !items.contains(where: { self.rowId(of: $0) == rowId }), let item = item(from: row) else { return nil }
+        let shown = items.prefix(index).last { $0.kind == .user || $0.kind == .agent }
+        if let shown, shown.id.hasPrefix("local-"), shown.text == item.text { return nil }
+        return item
     }
 
     private func appendAssistant(text: String = "", reasoning: String = "") {
@@ -538,6 +583,7 @@ public final class ChatStore {
         running = s["running"]?.bool ?? false
         turnStartedAt = running ? (s["turn_started_at"] ?? s["info"]?["turn_started_at"])?.double.map(Date.init(timeIntervalSince1970:)) : nil
         items = (s["messages"]?.array ?? []).compactMap(item(from:))
+        openerAt = nil
         for r in s["open_requests"]?.array ?? [] {
             receive(ServerRequest(rpcId: r["id"] ?? .null, method: r["method"]?.string ?? "", params: r["params"] ?? .null))
         }
