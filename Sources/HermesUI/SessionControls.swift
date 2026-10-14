@@ -20,6 +20,7 @@ struct ControlsRow: View {
                 .buttonStyle(Pill(active: store.fast))
             }
             DelegateButton(store: store, draft: $draft)
+            CommandsButton(store: store, draft: $draft)
             Spacer(minLength: 0)
             ApprovalsMenu(store: store)
         }
