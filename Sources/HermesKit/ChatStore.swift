@@ -34,6 +34,15 @@ public struct ChatItem: Identifiable, Hashable, Sendable {
     /// Attachments on a user message.
     public var images: [ImageSource] = []
     public var files: [String] = []
+    /// When the item was written (transcript timestamp) or arrived live; times turns.
+    public var date: Date?
+}
+
+/// When a live turn ended and whether the user stopped it.
+public struct TurnEnd: Hashable, Sendable {
+    public var at: Date
+    public var stopped: Bool
+    public init(at: Date, stopped: Bool) { self.at = at; self.stopped = stopped }
 }
 
 public struct ModelProvider: Identifiable, Hashable, Sendable {
@@ -74,6 +83,21 @@ public final class ChatStore {
     public var alert: String?
     /// Photos and files picked in the composer for the next message.
     public internal(set) var attachments: [Attachment] = []
+    /// When the running turn started, for the working timer.
+    public internal(set) var turnStartedAt: Date?
+    /// How live turns ended, by the id of the message that started each one.
+    public internal(set) var turnEnds: [String: TurnEnd] = [:]
+    /// Counts turns that finished without an error, so the open chat can answer with a haptic.
+    public internal(set) var finishedTurns = 0
+    /// The chat is the screen being shown; set by the navigation that owns it.
+    public var onScreen = false { didSet { markRead() } }
+    public var appActive = true { didSet { markRead() } }
+    public var visible: Bool { onScreen && appActive }
+    /// Chats whose turn finished while they were off screen.
+    // ponytail: in memory only, so dots clear on relaunch; persist the set if that matters.
+    public internal(set) var unread: Set<String> = []
+    /// Called when a turn finishes while the chat is off screen, with the chat title and the reply.
+    @ObservationIgnored public var onTurnFinished: ((_ title: String, _ reply: String) -> Void)?
 
     // Per-chat controls and live status; folded in ChatStore+Controls.swift.
     public internal(set) var todos: [TodoItem] = []
@@ -110,6 +134,10 @@ public final class ChatStore {
 
     // MARK: - Actions
 
+    private func markRead() {
+        if visible, let id = selectedId { unread.remove(id) }
+    }
+
     public func refreshSessions() async {
         guard let r = try? await gateway.call("session.list", scoped(["limit": 200])) else { return }
         sessionsLoaded = true
@@ -136,9 +164,12 @@ public final class ChatStore {
             attachments = []
             running = false
             statusText = nil
+            turnStartedAt = nil
+            turnEnds = [:]
             resetControls()
         }
         guard let storedId else { return }
+        unread.remove(storedId)
         loading = true
         defer { loading = false }
         let snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
@@ -211,10 +242,13 @@ public final class ChatStore {
             let sid = try await ensureSession()
             sent = try await takeAttachments(for: sid)
             let bubble = ChatItem(id: localId(), kind: .user, text: text, images: sent.filter(\.isImage).map { .data($0.data) },
-                                  files: sent.filter { !$0.isImage }.map(\.name))
+                                  files: sent.filter { !$0.isImage }.map(\.name), date: Date())
             // A busy session decides where the message goes (queue, steer, redirect), so wait for its answer.
             let busy = running
-            if !busy { items.append(bubble) }
+            if !busy {
+                items.append(bubble)
+                turnStartedAt = Date()
+            }
             running = true
             retryText = nil
             let r = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(Attachment.promptText(text, sent) + note)])
@@ -223,7 +257,8 @@ public final class ChatStore {
             running = false
             // Still staged on the server, so a retry sends them with the same refs.
             if attachments.isEmpty { attachments = sent }
-            items.append(ChatItem(id: localId(), kind: .error, text: error.localizedDescription))
+            turnStartedAt = nil
+            items.append(ChatItem(id: localId(), kind: .error, text: error.localizedDescription, date: Date()))
         }
     }
 
@@ -346,6 +381,7 @@ public final class ChatStore {
         case "message.start":
             running = true
             statusText = nil
+            if turnStartedAt == nil { turnStartedAt = Date() }
         case "message.delta":
             appendAssistant(text: p["text"]?.string ?? "")
         case "reasoning.delta":
@@ -367,7 +403,7 @@ public final class ChatStore {
             let id = p["tool_id"]?.string ?? localId()
             items.append(ChatItem(id: "tool-\(id)", kind: .tool, tool: ToolCall(
                 id: id, name: p["name"]?.string ?? "tool", context: p["context"]?.string ?? "",
-                args: p["args"], running: true)))
+                args: p["args"], running: true), date: Date()))
         case "tool.complete":
             let id = p["tool_id"]?.string ?? ""
             if let i = items.lastIndex(where: { $0.tool?.id == id }) {
@@ -376,13 +412,14 @@ public final class ChatStore {
                 items[i].tool?.summary = p["summary"]?.string
                 items[i].tool?.diff = p["inline_diff"]?.string
                 items[i].tool?.duration = p["duration_s"]?.double
+                if let args = p["args"], args.object?.isEmpty == false { items[i].tool?.args = args }
             }
         case "status.update":
             statusText = p["text"]?.string?.nonEmpty
         case "message.complete":
             complete(p)
         case "error":
-            items.append(ChatItem(id: localId(), kind: .error, text: p["message"]?.string ?? "Error"))
+            items.append(ChatItem(id: localId(), kind: .error, text: p["message"]?.string ?? "Error", date: Date()))
         case "session.info":
             applyInfo(p)
         case "session.title":
@@ -407,11 +444,22 @@ public final class ChatStore {
             appendAssistant(text: text)
         }
         closeAssistant()
-        if p["status"]?.string == "error" {
-            items.append(ChatItem(id: localId(), kind: .error, text: Self.turnErrorText(p)))
+        let status = p["status"]?.string
+        if status == "error" {
+            items.append(ChatItem(id: localId(), kind: .error, text: Self.turnErrorText(p), date: Date()))
+        }
+        if let start = items.last(where: { $0.kind == .user || $0.kind == .agent }) {
+            turnEnds[start.id] = TurnEnd(at: Date(), stopped: status == "interrupted")
         }
         running = false
         statusText = nil
+        turnStartedAt = nil
+        if status != "error" { finishedTurns += 1 }
+        if !visible {
+            if let id = selectedId, profile == nil { unread.insert(id) }
+            let reply = items.last { $0.kind == .assistant }?.text ?? ""
+            onTurnFinished?(title, status == "error" ? "The turn failed." : reply.nonEmpty ?? "Finished.")
+        }
         if selectedId == nil || (selectedId != canonicalId && !sessions.contains(where: { $0.id == selectedId })) {
             Task { await refreshSessions() }
         }
@@ -422,7 +470,7 @@ public final class ChatStore {
             items[last].text += text
             items[last].reasoning += reasoning
         } else {
-            items.append(ChatItem(id: localId(), kind: .assistant, text: text, reasoning: reasoning, streaming: true))
+            items.append(ChatItem(id: localId(), kind: .assistant, text: text, reasoning: reasoning, streaming: true, date: Date()))
         }
     }
 
@@ -436,6 +484,7 @@ public final class ChatStore {
         runtimeId = s["session_id"]?.string
         applyInfo(s["info"])
         running = s["running"]?.bool ?? false
+        turnStartedAt = running ? (s["turn_started_at"] ?? s["info"]?["turn_started_at"])?.double.map(Date.init(timeIntervalSince1970:)) : nil
         items = (s["messages"]?.array ?? []).compactMap(item(from:))
         for r in s["open_requests"]?.array ?? [] {
             receive(ServerRequest(rpcId: r["id"] ?? .null, method: r["method"]?.string ?? "", params: r["params"] ?? .null))
@@ -444,6 +493,12 @@ public final class ChatStore {
     }
 
     private func item(from m: JSON) -> ChatItem? {
+        var item = transcriptItem(m)
+        item?.date = m["timestamp"]?.double.map(Date.init(timeIntervalSince1970:))
+        return item
+    }
+
+    private func transcriptItem(_ m: JSON) -> ChatItem? {
         let rowId = m["row_id"]?.int.map(String.init) ?? localId()
         let text = m["text"]?.string ?? m["content"]?.string ?? ""
         switch m["role"]?.string {
@@ -462,9 +517,12 @@ public final class ChatStore {
             let id = m["tool_call_id"]?.string ?? rowId
             var args: JSON? = nil
             if let a = m["args"]?.object { args = .object(a) }
+            // Edit results come back as the tool's JSON text; parse it so failures and paths read like live ones.
+            let result = m["content"].map { c in c.string.flatMap { try? JSON.parse(Data($0.utf8)) } ?? c }
             return ChatItem(id: "row-\(rowId)", kind: .tool, tool: ToolCall(
                 id: id, name: m["name"]?.string ?? "tool", context: m["context"]?.string ?? "",
-                args: args, result: m["content"], running: false))
+                args: args, result: result,
+                diff: m["display_metadata"]?["tool_result_metadata"]?["inline_diff"]?.string, running: false))
         default:
             return nil
         }
@@ -476,6 +534,7 @@ public final class ChatStore {
         if let m = info["model"]?.string, !m.isEmpty { model = m }
         if let p = info["provider"]?.string, !p.isEmpty { provider = p }
         if let r = info["running"]?.bool { running = r }
+        if running, turnStartedAt == nil, let t = info["turn_started_at"]?.double { turnStartedAt = Date(timeIntervalSince1970: t) }
         if let stored = info["stored_session_id"]?.string, selectedId == nil { selectedId = stored }
     }
 

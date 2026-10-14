@@ -59,13 +59,16 @@ struct ApprovalsMenu: View {
     let store: ChatStore
 
     var body: some View {
+        let globalOff = store.approvalMode == "off"
         Menu {
+            Section(globalOff ? "Approvals: off for all chats" : "Approvals: on for all chats") {
+                Toggle("Require approvals in all chats", isOn: Binding(get: { !globalOff }, set: { on in
+                    Task { await store.setApprovalsRequired(on) }
+                }))
+            }
             // info.yolo already includes the global mode, so the per-chat switch changes nothing while it is off.
             Toggle("Skip approvals in this chat", isOn: Binding(get: { store.yolo }, set: { on in Task { await store.setYolo(on) } }))
-                .disabled(store.approvalMode == "off")
-            if store.approvalMode == "off" {
-                Text("Approvals are off in the Hermes config")
-            }
+                .disabled(globalOff)
         } label: {
             if store.approvalsOff {
                 Label("YOLO", systemImage: "bolt.fill").foregroundStyle(Theme.destructive)
