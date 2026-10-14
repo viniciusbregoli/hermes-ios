@@ -503,7 +503,7 @@ struct TierPicker: View {
                 }
                 ForEach(Array(ModelTiers.pickerRows(options ?? .null).enumerated()), id: \.offset) { _, row in
                     let slug = row["slug"]?.string ?? ""
-                    Menu("\(row["name"]?.string ?? slug) · \(ModelTiers.isSubscription(row) ? "subscription" : "per token")") {
+                    Menu(Self.providerTitle(row)) {
                         ForEach(row["models"]?.array?.compactMap(\.string) ?? [], id: \.self) { m in
                             Button { onChange(route.change(to: TierModel(model: m, provider: slug))) } label: {
                                 check(m, route.model == m && route.provider == slug)
@@ -522,6 +522,13 @@ struct TierPicker: View {
                 Text(TierLabel.text(route, chatModel: "")).lineLimit(1)
             }
         }
+    }
+
+    /// "GitHub Copilot · subscription", "OpenRouter · per token"; names that already say it stay as they are.
+    static func providerTitle(_ row: JSON) -> String {
+        let name = row["name"]?.string ?? row["slug"]?.string ?? ""
+        let kind = ModelTiers.isSubscription(row) ? "subscription" : "per token"
+        return name.lowercased().contains(kind) ? name : "\(name) · \(kind)"
     }
 
     @ViewBuilder private func check(_ title: String, _ on: Bool) -> some View {
