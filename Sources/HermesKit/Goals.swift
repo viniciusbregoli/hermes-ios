@@ -126,10 +126,11 @@ extension ChatStore {
     }
 
     /// Runs one `session.control` action; a goal resume answers with a turn to send, which queues if one is running.
+    /// A pause is kept: see `holdPause`.
     /// - Parameters:
     ///   - text: for subgoal.add.
     ///   - index: 1-based, for subgoal.remove.
-    public func control(_ action: String, text: String? = nil, index: Int? = nil) async {
+    public func control(_ action: String, text: String? = nil, index: Int? = nil, reassert: Bool = false) async {
         do {
             let sid = try await ensureSession()
             var args: [String: JSON] = [:]
@@ -138,6 +139,11 @@ extension ChatStore {
             var params: [String: JSON] = ["session_id": .string(sid), "action": .string(action)]
             if !args.isEmpty { params["args"] = .object(args) }
             let r = try await gateway.call("session.control", params)
+            switch action {
+            case "goal.pause": if !reassert { pauseReasserts = Self.maxPauseReasserts }
+            case "goal.resume", "goal.clear": pauseReasserts = nil
+            default: break
+            }
             if let c = SessionControl(r["control"]), sid == runtimeId { applyControl(c) }
             if let dispatch = r["dispatch"], case .send(let message, let display, _) = SlashDirective(dispatch, command: action) {
                 await send(message, display: display)
@@ -155,5 +161,25 @@ extension ChatStore {
     private func applyControl(_ c: SessionControl) {
         controlVersion += 1
         control = c.isEmpty ? nil : c
+        holdPause(c)
+    }
+
+    static let maxPauseReasserts = 5
+
+    /// The gateway can lose a pause: the judge of the turn that just ended holds the goal as it read it, and
+    /// saves it back as active after the pause, so the goal resumes and runs another turn. Until the user
+    /// resumes or clears the goal, an active goal is paused again (a few times at most), so the card ends on the
+    /// state the user asked for. A continuation already started still finishes.
+    private func holdPause(_ c: SessionControl) {
+        guard let left = pauseReasserts else { return }
+        switch c.goal?.status {
+        case .paused:
+            break
+        case .active where left > 0:
+            pauseReasserts = left - 1
+            Task { await control("goal.pause", reassert: true) }
+        default:
+            pauseReasserts = nil
+        }
     }
 }
