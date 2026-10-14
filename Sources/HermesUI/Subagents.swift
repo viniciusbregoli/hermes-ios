@@ -304,9 +304,15 @@ struct DelegateButton: View {
 
     var body: some View {
         Button { open = true } label: {
-            Label("Delegate", systemImage: "arrow.triangle.branch")
+            // Narrow phones keep the other pills whole and show the icon alone.
+            ViewThatFits(in: .horizontal) {
+                Label("Delegate", systemImage: "arrow.triangle.branch")
+                Image(systemName: "arrow.triangle.branch")
+            }
         }
         .buttonStyle(Pill(active: false))
+        .layoutPriority(-1)
+        .accessibilityLabel("Delegate")
         .keyboardShortcut("d", modifiers: [.command, .shift])
         .help("Delegate to a subagent (⇧⌘D)")
         // The temporary model is put back at the end of the turn, so it can't start behind a running one.
