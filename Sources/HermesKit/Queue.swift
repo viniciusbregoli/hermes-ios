@@ -154,7 +154,7 @@ extension ChatStore {
         let next = queue.removeFirst()
         Task {
             // The failed message stays in the transcript with its error, like any send; the rest waits for Resume.
-            if !(await submit(next.text, note: next.note, display: next.display, queued: true)), !queue.isEmpty { queuePaused = true }
+            if !(await submit(next.text, note: next.note, display: next.display, queued: true, ownAttachments: false)), !queue.isEmpty { queuePaused = true }
         }
     }
 
