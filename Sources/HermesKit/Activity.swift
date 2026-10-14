@@ -20,6 +20,8 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
         case task(String)
         /// Delegated children still running.
         case subagents(Int)
+        /// A shell process the agent started in the background; stop it with `ActivityStore.kill(process:)`.
+        case process(BackgroundProcess)
     }
 
     public enum Kind: Hashable, Sendable {
@@ -53,6 +55,61 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
     public var date: Date
 
     public var section: Section { kind.section }
+}
+
+/// A background shell process of a live session, from `process.list`.
+/// Running ones are listed until they exit; exited ones stay for `exitedWindow` so the exit code can be seen.
+public struct BackgroundProcess: Hashable, Sendable {
+    public static let exitedWindow: TimeInterval = 300
+
+    /// The gateway's process id.
+    public let id: String
+    /// Runtime id of the session that owns it.
+    public let sessionId: String
+    public var command: String
+    public var cwd: String
+    public var running: Bool
+    /// Derived from the uptime at the last poll, so the UI can show a live uptime.
+    public var startedAt: Date
+    /// Set once it exited (nil while running, or if the server doesn't know when).
+    public var exitedAt: Date?
+    public var exitCode: Int?
+    /// The last few thousand characters of its output.
+    public var outputTail: String
+
+    func shown(at now: Date) -> Bool {
+        running || exitedAt.map { now.timeIntervalSince($0) < Self.exitedWindow } ?? false
+    }
+
+    static func parse(_ rows: JSON?, session: String, now: Date) -> [BackgroundProcess] {
+        (rows?.array ?? []).compactMap { r in
+            guard let id = r["session_id"]?.string else { return nil }
+            let exited = r["exited_at"]?.double ?? 0
+            return BackgroundProcess(id: id, sessionId: session, command: r["command"]?.string ?? "", cwd: r["cwd"]?.string ?? "",
+                                     running: r["status"]?.string == "running",
+                                     startedAt: now.addingTimeInterval(-(r["uptime_seconds"]?.double ?? 0)),
+                                     exitedAt: exited > 0 ? Date(timeIntervalSince1970: exited) : nil, exitCode: r["exit_code"]?.int,
+                                     outputTail: r["output_tail"]?.string ?? r["output_preview"]?.string ?? "")
+        }
+    }
+
+    /// `process.list` for each session, at most `limit` at a time. A session whose call fails is left out.
+    static func fetch(_ sessions: [String], limit: Int = 4, now: Date = Date(),
+                      list: @escaping @Sendable (String) async throws -> JSON) async -> [String: [BackgroundProcess]] {
+        await withTaskGroup(of: (String, JSON?).self) { group in
+            var queue = sessions.makeIterator()
+            for _ in 0..<limit {
+                guard let sid = queue.next() else { break }
+                group.addTask { (sid, try? await list(sid)) }
+            }
+            var out: [String: [BackgroundProcess]] = [:]
+            for await (sid, r) in group {
+                if let r { out[sid] = parse(r["processes"], session: sid, now: now) }
+                if let sid = queue.next() { group.addTask { (sid, try? await list(sid)) } }
+            }
+            return out
+        }
+    }
 }
 
 /// A row of `session.active_list`: a live agent in the gateway process, any profile.
@@ -106,6 +163,8 @@ struct ActivitySnapshot {
     var rooms: [Room] = []
     var roomUnread: Set<String> = []
     var roomStatus: [String: (working: Bool, approvals: [RoomAction])] = [:]
+    var processes: [BackgroundProcess] = []
+    var now = Date()
 }
 
 enum ActivityFold {
@@ -166,6 +225,12 @@ enum ActivityFold {
             }
         }
 
+        for p in s.processes where p.shown(at: s.now) {
+            let (target, title) = place(runtime: p.sessionId)
+            out.append(ActivityItem(id: "proc-\(p.id)", kind: .background(.process(p)), target: target, title: title,
+                                    detail: oneLine(p.command), date: p.exitedAt ?? p.startedAt))
+        }
+
         for (id, at) in s.chatUnread where !busy.contains(.chat(id)) {
             out.append(ActivityItem(id: "done-\(id)", kind: .done(unread: at), target: .chat(id), title: s.chats[id]?.nonEmpty ?? "Chat",
                                     detail: "", date: at))
@@ -218,6 +283,12 @@ public final class ActivityStore {
 
     private(set) var live: [LiveSession] = []
     private(set) var fetched: [String: [ServerRequest]] = [:]
+    /// By runtime session id.
+    private(set) var processes: [String: [BackgroundProcess]] = [:]
+    /// The RPCs this store sends besides polling prompts; tests replace it.
+    @ObservationIgnored lazy var call: @Sendable (String, [String: JSON]) async throws -> JSON = { [gateway] in
+        try await gateway.call($0, $1)
+    }
     @ObservationIgnored private weak var chats: ChatStore?
     @ObservationIgnored private weak var bots: BotStore?
     @ObservationIgnored private weak var groups: GroupStore?
@@ -230,7 +301,8 @@ public final class ActivityStore {
         self.bots = bots
         self.groups = groups
         gateway.listen(self, event: { [weak self] e in
-            guard let self, e.type == "sessions.changed", self.poller != nil else { return }
+            let process = e.type == "terminal.close" || (e.type == "status.update" && e.payload["kind"]?.string == "process")
+            guard let self, e.type == "sessions.changed" || process, self.poller != nil else { return }
             Task { await self.refresh() }
         }, connected: { [weak self] in
             guard let self, self.poller != nil else { return }
@@ -281,6 +353,24 @@ public final class ActivityStore {
         fetched = open
         // Only prompts parked before the reads: a newer one may not have been listed yet.
         gateway.withdraw(ActivityFold.stale(inbox: parked, open: open, live: Set(rows.map(\.id))))
+
+        // process.list waits for the session's agent, so only ask sessions likely to have processes.
+        let now = Date()
+        let watched = rows.filter { row in
+            ["starting", "working", "waiting"].contains(row.status) || now.timeIntervalSince(row.lastActive) < 600
+                || processes[row.id]?.contains { $0.shown(at: now) } == true
+        }.map(\.id)
+        let call = call
+        var found = await BackgroundProcess.fetch(watched, now: now) { try await call("process.list", ["session_id": .string($0)]) }
+        // A failed read keeps the last list of a session that is still live.
+        for sid in watched where found[sid] == nil { found[sid] = processes[sid] }
+        processes = found
+    }
+
+    /// Kills one background process (`process.kill`; never `process.stop`, which kills them all).
+    public func kill(process: BackgroundProcess) async throws {
+        _ = try await call("process.kill", ["session_id": .string(process.sessionId), "process_id": .string(process.id)])
+        await refresh()
     }
 
     /// Answers through the chat that shows the prompt when it is open, else straight to the server.
@@ -299,6 +389,7 @@ public final class ActivityStore {
 
     var snapshot: ActivitySnapshot {
         var s = ActivitySnapshot(live: live, inbox: gateway.inbox, fetched: fetched.values.flatMap { $0 })
+        s.processes = processes.values.flatMap { $0 }
         if let chats {
             s.chats = Dictionary(chats.sessions.map { ($0.id, $0.title) }) { a, _ in a }
             s.chatUnread = chats.unread
