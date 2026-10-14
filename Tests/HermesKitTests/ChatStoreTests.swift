@@ -192,3 +192,83 @@ struct BotHistoryTests {
         #expect(store.missingOpener(in: delivered + [["role": "user", "text": "thanks", "row_id": 5]], before: 5) == nil)
     }
 }
+
+@MainActor
+struct HarnessTextTests {
+    static let process = "[IMPORTANT: Background process proc_2d1b0f9cd6e8 completed normally (exit code 0).\nCommand: sleep 15\nOutput: __HERMES_CWD_67bf9446c4ba__/home/munchkin__HERMES_CWD_67bf9446c4ba__\n]"
+    static let cron = "[IMPORTANT: You are running as a scheduled cron job. DELIVERY: your reply is delivered. [SILENT] is a literal token.]\n\nReply with the word ok."
+    static let delegation = "[ASYNC DELEGATION BATCH COMPLETE - deleg_9fe0d6c5]\nA background fan-out unit you dispatched earlier has finished.\nThere are **0 files** here.\nFull live transcript (complete tool/assistant trace): /home/munchkin/.hermes/cache/delegation/live/deleg_9fe0d6c5/task-0.log"
+
+    func items(_ messages: [JSON]) -> [ChatItem] {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        store.apply(snapshot: ["session_id": "rt", "messages": .array(messages)])
+        return store.items
+    }
+
+    @Test func aProcessNoticeIsASystemRowWithoutTheMarkers() throws {
+        let items = items([["role": "user", "text": .string(Self.process), "row_id": 1], ["role": "assistant", "text": "stop", "row_id": 2]])
+        #expect(items.map(\.kind) == [.system, .assistant])
+        let note = try #require(items[0].system)
+        #expect(note.title == "Background process finished")
+        #expect(note.detail == "Background process proc_2d1b0f9cd6e8 completed normally (exit code 0).\nCommand: sleep 15\nOutput: /home/munchkin")
+    }
+
+    @Test func aDelegationResultHidesTheGatewayPath() throws {
+        let note = try #require(Harness.note(text: Self.delegation))
+        #expect(note.title == "Delegated work finished")
+        #expect(note.detail.contains("**0 files**") && !note.detail.contains("/home/munchkin") && !note.detail.contains("ASYNC"))
+        // The gateway's own label and task count win when it sends them.
+        #expect(Harness.note(text: Self.delegation, kind: "async_delegation_complete", metadata: ["display_text": "2 agents done"])?.title == "2 agents done")
+        // REST rows carry display_metadata as JSON text.
+        #expect(Harness.note(text: "x", kind: "async_delegation_complete", metadata: .string(#"{"task_count": 3}"#))?.title == "3 background agents finished")
+    }
+
+    @Test func aRoutineRunKeepsOnlyItsPromptBehindTheNote() throws {
+        let note = try #require(Harness.note(text: Self.cron))
+        #expect(note.title == "Routine run" && note.detail == "Reply with the word ok.")
+        #expect(items([["role": "user", "text": .string(Self.cron), "row_id": 1]]).first?.kind == .system)
+    }
+
+    @Test func aSkillRoutineShowsItsNameInsteadOfTheSkillBody() throws {
+        let text = "[IMPORTANT: The user has invoked the \"bill-reminders\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n---\nname: bill-reminders\n---\nbody\n\n[IMPORTANT: You are running as a scheduled cron job. DELIVERY: x]\n\nthe job prompt"
+        let note = try #require(Harness.note(text: text))
+        #expect(note.title == "Routine run: bill-reminders" && note.detail.hasPrefix("---\nname:") && note.detail.hasSuffix("the job prompt"))
+        #expect(Harness.note(text: "[IMPORTANT: The user has invoked the \"x\" skill, y]\n\nbody")?.title == "Skill: x")
+    }
+
+    @Test func hiddenRowsAndTypedNoticesFollowTheDisplayKind() throws {
+        let rows: [JSON] = [
+            ["role": "user", "text": "scaffolding", "display_kind": "hidden", "row_id": 1],
+            ["role": "user", "text": "[Background process proc_1 heartbeat #2 still running]", "row_id": 2],
+            ["role": "user", "text": "[System note: switched]", "display_kind": "model_switch", "row_id": 3],
+            ["role": "user", "text": "typed by me", "row_id": 4],
+        ]
+        let shown = items(rows)
+        #expect(shown.map(\.kind) == [.system, .user])
+        #expect(shown[0].system?.title == "Model changed")
+        #expect(shown[1].text == "typed by me")
+    }
+
+    @Test func plainUserTextIsNotANotice() {
+        #expect(Harness.note(text: "[IMPORTANT: remember my password is hunter2]") == nil)
+        #expect(Harness.note(text: "what is a background process?") == nil)
+    }
+
+    @Test func aNoticeStartsATurnSoItsReplyFoldsUnderIt() {
+        let items = items([["role": "user", "text": .string(Self.process), "row_id": 1],
+                           ["role": "tool", "name": "terminal", "context": "ls", "args": ["command": "ls"], "row_id": 2],
+                           ["role": "assistant", "text": "done", "row_id": 3]])
+        let rows = Timeline.rows(items, running: false)
+        guard case .item(let first)? = rows.first else { Issue.record("no rows"); return }
+        #expect(first.kind == .system)
+        #expect(rows.count == 3 && rows.dropFirst().contains { if case .item(let i) = $0 { i.text == "done" } else { false } })
+    }
+
+    @Test func delegateBubbleShowsTheTaskNotTheInstruction() {
+        let prompt = DelegateTier.light.prompt("count the files", plugin: true)
+        #expect(DelegateTier.displayed(prompt) == "Delegate (Light): count the files")
+        #expect(DelegateTier.displayed(DelegateTier.heavy.prompt("a\nb", plugin: false)) == "Delegate: a\nb")
+        #expect(DelegateTier.displayed("Use your brain") == nil)
+        #expect(items([["role": "user", "text": .string(prompt), "row_id": 1]]).first?.text == "Delegate (Light): count the files")
+    }
+}
