@@ -43,10 +43,10 @@ struct SlashTests {
         let commands: JSON = ["replace_from": 1, "items": [
             ["text": "/usage", "display": "/usage", "meta": "Token usage", "kind": "command"],
             ["text": "/verbose", "meta": "Tool progress"], ["text": "/reset", "meta": "alias"],
-            ["text": "work", "meta": "Do work", "kind": "skill"], ["text": "/usage", "meta": "dup"]]]
+            ["text": "work", "meta": "\u{26A1} Do work", "kind": "skill"], ["text": "q", "meta": "alias"], ["text": "/usage", "meta": "dup"]]]
         let rows = SlashSuggestion.parse(commands, typed: "/u")
         #expect(rows.map(\.text) == ["/usage", "/work"])
-        #expect(rows[0].detail == "Token usage" && !rows[0].isSkill && rows[1].isSkill)
+        #expect(rows[0].detail == "Token usage" && !rows[0].isSkill && rows[1].isSkill && rows[1].detail == "Do work")
         // An alias typed in full still shows, so Return visibly runs something.
         #expect(SlashSuggestion.parse(commands, typed: "/reset").map(\.text) == ["/usage", "/reset", "/work"])
 

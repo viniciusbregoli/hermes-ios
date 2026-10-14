@@ -64,8 +64,11 @@ public struct SlashCommand: Equatable, Sendable {
         "branch", "fork", "profile", "skin", "pet", "hatch", "generate-pet", "journey", "learning",
         "memory-graph", "wake", "handoff", "browser", "resume", "sessions", "switch"]
 
-    /// Runnable but kept out of suggestions: aliases of listed commands, and /model (the model menu covers it).
-    static let unlisted: Set<String> = ["model", "reset", "clear", "background", "compact", "commands"]
+    /// Runnable but kept out of suggestions: aliases of listed commands (`commands.catalog`'s `canon`),
+    /// and /model (the model menu covers it).
+    static let unlisted: Set<String> = [
+        "model", "reset", "clear", "background", "compact", "commands", "bp", "codex_runtime", "compose", "ctx",
+        "hb", "proactive", "q", "s", "suggest", "tasks", "ts", "upgrade", "v"]
 
     /// Whether `name` (with or without its slash) belongs in the suggestions and the commands sheet.
     public static func listed(_ name: String) -> Bool {
@@ -96,7 +99,9 @@ public struct SlashSuggestion: Identifiable, Hashable, Sendable {
             let text = argStage ? prefix + raw : (raw.hasPrefix("/") ? raw : "/" + raw)
             guard argStage || SlashCommand.listed(text) || text.lowercased() == exact, seen.insert(text).inserted else { return nil }
             let display = item["display"]?.string?.nonEmpty ?? raw
-            return SlashSuggestion(text: text, label: display, detail: item["meta"]?.string ?? "",
+            // Skill rows lead with a ⚡ glyph; the badge says it instead.
+            let detail = (item["meta"]?.string ?? "").replacingOccurrences(of: "^\u{26A1}\\s*", with: "", options: .regularExpression)
+            return SlashSuggestion(text: text, label: display, detail: detail,
                                    isSkill: item["kind"]?.string == "skill")
         }
     }
