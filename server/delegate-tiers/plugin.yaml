@@ -1,0 +1,5 @@
+name: delegate-tiers
+version: "0.1.0"
+description: Delegate subagents on a light, standard or heavy model tier (delegation.tiers in config.yaml)
+provides_tools:
+  - delegate_tiered
