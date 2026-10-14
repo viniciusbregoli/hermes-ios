@@ -55,6 +55,19 @@ struct ChatManagementTests {
         #expect(SearchHit(id: "x", title: "", snippet: "a >>>b", date: nil).runs.map { $0.text } == ["a ", "b"])
     }
 
+    @Test func toolPayloadSnippetsShrinkToTheMatchedWords() {
+        let hits = SearchHit.parse(["results": [
+            ["session_id": "a", "role": "tool", "snippet": #"{"id": "call_eRp7Y22", "output": ">>>ERP<<< ok"}"#],
+            ["session_id": "b", "role": "assistant", "snippet": #"{"id": "call_1", "args": ">>>ERP<<<"}"#],
+            ["session_id": "c", "role": "user", "snippet": "the >>>ERP<<< is down"],
+            ["session_id": "d", "role": "tool", "snippet": #"{"x": 1}"#],
+        ]])
+        #expect(hits[0].runs.map { $0.text } == ["Tool output: ", "ERP"] && hits[0].runs.map { $0.match } == [false, true])
+        #expect(hits[1].runs.map { $0.text } == ["Tool output: ", "ERP"])
+        #expect(hits[2].runs.map { $0.text } == ["the ", "ERP", " is down"])
+        #expect(hits[3].runs.map { $0.text } == ["Tool output"])
+    }
+
     @Test func pinsComeFromTheRESTFlagAndSplitTheList() {
         store.pinned = ChatStore.pinnedIds(["sessions": [["id": "a", "pinned": true], ["id": "b", "pinned": false], ["id": "c"]]])
         #expect(store.pinned == ["a"])
