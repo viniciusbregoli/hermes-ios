@@ -77,6 +77,9 @@ public final class ChatStore {
     public private(set) var botChatError: String?
     public internal(set) var items: [ChatItem] = []
     public private(set) var loading = false
+    /// Set by `show`: a transcript to read, with no session behind it.
+    public private(set) var readOnly = false
+    @ObservationIgnored private var shownTitle = ""
     public internal(set) var running = false
     public private(set) var statusText: String?
     public private(set) var model = ""
@@ -138,6 +141,7 @@ public final class ChatStore {
     }
 
     public var title: String {
+        if readOnly { return shownTitle }
         guard let id = selectedId else { return "New chat" }
         if id == canonicalId, let botChatTitle { return botChatTitle }
         return sessions.first { $0.id == id }?.title.nonEmpty ?? "Chat"
@@ -158,6 +162,21 @@ public final class ChatStore {
 
     public func open(_ storedId: String?) async {
         do { try await load(storedId) } catch { alert = error.localizedDescription }
+    }
+
+    /// Shows a stored chat's transcript without attaching an agent to it, so nothing can be sent (a routine's run).
+    public func show(_ storedId: String, title: String) async {
+        readOnly = true
+        shownTitle = title
+        selectedId = storedId
+        loading = true
+        defer { loading = false }
+        do {
+            let r = try await gateway.call("session.history", scoped(["session_id": .string(storedId)]))
+            items = (r["messages"]?.array ?? []).compactMap(item(from:))
+        } catch {
+            alert = error.localizedDescription
+        }
     }
 
     private func load(_ storedId: String?) async throws {
@@ -555,7 +574,7 @@ public final class ChatStore {
             await refreshSessions()
             // ponytail: re-resume reloads the whole transcript; session.events.since would replay
             // only the missed deltas if reconnects mid-stream become common.
-            if let id = selectedId {
+            if let id = selectedId, !readOnly {
                 runtimeId = nil
                 await open(id)
             }
