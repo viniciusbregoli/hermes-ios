@@ -95,6 +95,16 @@ struct TimelineTests {
         #expect(fold.label == "You stopped after 12s")
     }
 
+    @Test func stoppedTurnWithNoWorkEndsWithAMarker() {
+        let rows = Timeline.rows([user("u1")], running: false, ends: ["u1": TurnEnd(at: at(12), stopped: true)])
+        guard rows.count == 2, case .fold(let marker) = rows[1] else { Issue.record("no marker"); return }
+        #expect(marker.label == "You stopped after 12s" && !marker.foldable)
+        // After a partial reply too, and never on a turn that finished normally.
+        let partial = Timeline.rows([user("u1"), reply("a", "Let me")], running: false, ends: ["u1": TurnEnd(at: at(12), stopped: true)])
+        #expect(partial.count == 3)
+        #expect(Timeline.rows([user("u1")], running: false, ends: ["u1": TurnEnd(at: at(12), stopped: false)]).count == 1)
+    }
+
     @Test func middleRepliesFoldWithTheWork() {
         let items = [user("u"), reply("a1", "Let me look."), tool("t1", "read_file", ["path": "/x"]),
                      reply("a2", "Found it."), tool("t2", "terminal", ["command": "make"]), reply("a3", "Fixed.")]
