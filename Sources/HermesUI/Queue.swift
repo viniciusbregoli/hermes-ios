@@ -105,6 +105,7 @@ struct QueueSheet: View {
         .contextMenu { actions(m, at: i) }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) { store.removeQueued(m.id) } label: { Label("Remove", systemImage: "trash") }
+                .tint(Theme.destructive)
         }
         .swipeActions(edge: .leading) {
             if canSteer(m) {

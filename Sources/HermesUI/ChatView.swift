@@ -85,6 +85,8 @@ struct ChatView: View {
                             toEnd(proxy)
                         }
                         QueueChip(store: store, edit: editQueued)
+                            // The keyboard would otherwise cover the queue sheet's rows.
+                            .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
                     }
                 }
                 .animation(.easeOut(duration: 0.18), value: store.steerFeedback)
