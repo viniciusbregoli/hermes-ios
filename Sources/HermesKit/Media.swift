@@ -98,6 +98,16 @@ public enum Media {
         return comps.url!
     }
 
+    /// Bearer-authorized request for a gateway file.
+    public static func request(path: String, credentials c: Credentials) -> URLRequest {
+        var r = URLRequest(url: downloadURL(base: c.baseURL, path: path))
+        r.setValue("Bearer \(c.accessToken)", forHTTPHeaderField: "Authorization")
+        return r
+    }
+
+    /// Never follows redirects, so the bearer token can't be carried to another host.
+    public static let session = URLSession(configuration: .default, delegate: NoRedirects(), delegateQueue: nil)
+
     public static func name(of path: String) -> String {
         path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? path
     }
