@@ -61,7 +61,9 @@ public final class ChatStore {
     public let gateway: Gateway
     /// The profile (bot) this store talks to; nil is the gateway's own profile.
     public let profile: String?
-    public private(set) var sessions: [SessionRow] = []
+    public internal(set) var sessions: [SessionRow] = []
+    /// Stored ids of pinned chats, mirrored from the server's `pinned` flag.
+    public internal(set) var pinned: Set<String> = []
     /// False until the first session list arrives, so an empty list isn't mistaken for "no chats".
     public private(set) var sessionsLoaded = false
     /// Stored id of the open chat; nil means a new, unsent chat.
@@ -75,7 +77,7 @@ public final class ChatStore {
     public private(set) var botChatError: String?
     public internal(set) var items: [ChatItem] = []
     public private(set) var loading = false
-    public private(set) var running = false
+    public internal(set) var running = false
     public private(set) var statusText: String?
     public private(set) var model = ""
     public private(set) var provider = ""
@@ -122,6 +124,9 @@ public final class ChatStore {
     @ObservationIgnored var pendingDelegation: PendingDelegation?
     @ObservationIgnored var tierLabelsLoaded = false
 
+    /// Durable row ids of live user messages (from prompt.submit), and history rows a rewind renumbered;
+    /// nil means the row is gone. Transcript rows carry theirs in the item id. See `rowId(of:)`.
+    var rowIds: [String: Int?] = [:]
     @ObservationIgnored private var nextLocalId = 0
 
     public init(gateway: Gateway, profile: String? = nil) {
@@ -147,12 +152,8 @@ public final class ChatStore {
     public func refreshSessions() async {
         guard let r = try? await gateway.call("session.list", scoped(["limit": 200])) else { return }
         sessionsLoaded = true
-        sessions = (r["sessions"]?.array ?? []).compactMap { s in
-            guard let id = s["id"]?.string else { return nil }
-            return SessionRow(id: id, title: s["title"]?.string ?? "", preview: s["preview"]?.string ?? "",
-                              startedAt: Date(timeIntervalSince1970: s["started_at"]?.double ?? 0),
-                              messageCount: s["message_count"]?.int ?? 0)
-        }
+        sessions = SessionRow.parse(r["sessions"])
+        await refreshPins()
     }
 
     public func open(_ storedId: String?) async {
@@ -172,6 +173,7 @@ public final class ChatStore {
             statusText = nil
             turnStartedAt = nil
             turnEnds = [:]
+            rowIds = [:]
             resetControls()
         }
         guard let storedId else { return }
@@ -260,6 +262,7 @@ public final class ChatStore {
             retryText = nil
             let r = try await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(Attachment.promptText(text, sent) + note)])
             if busy { placeSubmitted(bubble, status: r["status"]?.string) }
+            bindRows(r, bubble: bubble.id)
         } catch {
             running = false
             // Still staged on the server, so a retry sends them with the same refs.
@@ -570,7 +573,7 @@ public final class ChatStore {
     }
 
     /// Session methods take `profile` to reach another profile's database; runtime ids are already scoped.
-    private func scoped(_ params: [String: JSON]) -> [String: JSON] {
+    func scoped(_ params: [String: JSON]) -> [String: JSON] {
         guard let profile else { return params }
         return params.merging(["profile": .string(profile)]) { a, _ in a }
     }
