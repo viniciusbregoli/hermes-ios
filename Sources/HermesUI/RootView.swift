@@ -4,6 +4,7 @@ import HermesKit
 public struct RootView: View {
     @State private var store: ChatStore
     @State private var bots: BotStore
+    @State private var groups: GroupStore
     @State private var tab = 0
     @State private var showSettings = false
     @AppStorage("theme") private var themeId = Palette.nous.id
@@ -21,6 +22,7 @@ public struct RootView: View {
         #endif
         _store = State(initialValue: store)
         _bots = State(initialValue: bots)
+        _groups = State(initialValue: GroupStore(gateway: gateway))
     }
 
     public var body: some View {
@@ -37,10 +39,14 @@ public struct RootView: View {
                     BotsView(bots: bots, showSettings: $showSettings)
                         .tabItem { Label("Bots", systemImage: "person.2") }
                         .tag(1)
+                    GroupsView(groups: groups, bots: bots, showSettings: $showSettings)
+                        .tabItem { Label("Groups", systemImage: "person.3") }
+                        .tag(2)
                 }
                 .background {
                     Button("Chats") { tab = 0 }.keyboardShortcut("1", modifiers: .command).hidden()
                     Button("Bots") { tab = 1 }.keyboardShortcut("2", modifiers: .command).hidden()
+                    Button("Groups") { tab = 2 }.keyboardShortcut("3", modifiers: .command).hidden()
                 }
             }
         }
