@@ -298,7 +298,7 @@ struct EditBanner: View {
             }
             Spacer()
             Button(action: cancel) {
-                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted)
+                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted).tapTarget()
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)

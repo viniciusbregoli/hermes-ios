@@ -11,7 +11,8 @@ struct ControlsRow: View {
     @Binding var draft: String
 
     var body: some View {
-        HStack(spacing: 6) {
+        // Each pill is padded out to a 44 pt target, so the row spacing stays small to keep Approvals whole.
+        HStack(spacing: 4) {
             ReasoningMenu(store: store)
             if store.fastAvailable {
                 Button { Task { await store.setFast(!store.fast) } } label: {
@@ -100,6 +101,7 @@ struct Pill: ButtonStyle {
             .background(active ? tint.opacity(0.15) : .clear, in: Capsule())
             .overlay(Capsule().stroke(active ? tint.opacity(0.5) : Theme.border))
             .opacity(configuration.isPressed ? 0.6 : 1)
+            .tapTarget()
     }
 }
 
