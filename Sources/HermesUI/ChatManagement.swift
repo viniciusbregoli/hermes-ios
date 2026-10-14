@@ -236,3 +236,41 @@ struct ArchivedEntry: View {
         .listRowBackground(Theme.sidebar)
     }
 }
+
+// MARK: - Message actions
+
+/// An extra entry in a message's long-press menu.
+struct MessageAction: Identifiable {
+    var id: String { title }
+    let title: String
+    let icon: String
+    let run: () -> Void
+}
+
+/// Above the composer while a sent message is being edited; Esc or the cross puts the old draft back.
+struct EditBanner: View {
+    let cancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pencil").foregroundStyle(Theme.primary)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Editing").font(.footnote.weight(.semibold))
+                Text("Sending replaces this message and everything after it.")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.muted)
+            }
+            Spacer()
+            Button(action: cancel) {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Cancel editing")
+            .help("Cancel editing (Esc)")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
+    }
+}

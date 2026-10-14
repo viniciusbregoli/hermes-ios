@@ -22,6 +22,9 @@ struct ChatView: View {
     /// The message this view just sent; its turn starts at the top so the answer grows into view.
     @State private var pinned: String?
     @State private var pinNext = false
+    /// The sent message being edited, and the draft it pushed aside.
+    @State private var editing: ChatItem?
+    @State private var setAside = ""
     @Environment(\.scenePhase) private var scenePhase
 
     private static let end = "timeline-end"
@@ -112,6 +115,7 @@ struct ChatView: View {
                     pinned = nil
                     openTurns = []
                     openGroups = []
+                    editing = nil
                 }
             }
         }
@@ -132,16 +136,24 @@ struct ChatView: View {
                 SlashPicker(store: store, menu: slash, draft: $draft, run: runSlash)
                 SubagentsBar(store: store)
                 ControlsRow(store: store, draft: $draft)
+                if editing != nil { EditBanner(cancel: endEditing) }
                 AttachmentChips(store: store)
                 HStack(alignment: .bottom, spacing: 0) {
                     AttachButton(store: store)
                         .padding([.leading, .bottom], 10)
                         .disabled(store.gateway.status != .online)
-                    Composer(draft: $draft, focused: $composerFocused, placeholder: "Message \(botName)",
+                    Composer(draft: $draft, focused: $composerFocused, placeholder: editing == nil ? "Message \(botName)" : "Edit message",
                              running: store.running, enabled: store.gateway.status == .online,
                              hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending) {
-                        if SlashCommand(draft) != nil { return runSlash(draft) }
                         let text = draft
+                        // An edit resends its text as written, even when it starts with a slash.
+                        if let edit = editing {
+                            endEditing()
+                            pinNext = true
+                            Task { await store.rewind(edit, to: text) }
+                            return
+                        }
+                        if SlashCommand(draft) != nil { return runSlash(draft) }
                         draft = ""
                         Drafts.save("", for: draftKey)
                         pinNext = true
@@ -181,7 +193,7 @@ struct ChatView: View {
     @ViewBuilder private func row(_ row: TimelineRow) -> some View {
         switch row {
         case .item(let item):
-            ItemView(item: item, bots: bots)
+            ItemView(item: item, bots: bots, actions: actions(for: item))
             ItemFooter(store: store, item: item)
         case .work(let group):
             ActivityGroupView(group: group, open: Binding(
@@ -211,6 +223,36 @@ struct ChatView: View {
             case .prefill(let message): draft = message
             }
         }
+    }
+
+    private func actions(for item: ChatItem) -> [MessageAction] {
+        var out: [MessageAction] = []
+        if store.canEdit(item) {
+            out.append(MessageAction(title: "Edit and resend", icon: "pencil") {
+                if editing == nil { setAside = draft }
+                editing = item
+                draft = item.text
+                composerFocused = true
+            })
+        }
+        if store.canRegenerate(item) {
+            out.append(MessageAction(title: "Retry", icon: "arrow.clockwise") {
+                pinNext = true
+                Task { await store.regenerate() }
+            })
+        }
+        if store.canBranch(item) {
+            out.append(MessageAction(title: "Branch from here", icon: "arrow.triangle.branch") {
+                Task { await store.branch(at: item) }
+            })
+        }
+        return out
+    }
+
+    private func endEditing() {
+        editing = nil
+        draft = setAside
+        setAside = ""
     }
 
     private func toEnd(_ proxy: ScrollViewProxy) {
@@ -328,6 +370,8 @@ struct EmptyChat: View {
 struct ItemView: View {
     let item: ChatItem
     var bots: BotStore?
+    /// Edit, retry and branch, after Copy in the long-press menu.
+    var actions: [MessageAction] = []
 
     var body: some View {
         switch item.kind {
@@ -341,7 +385,10 @@ struct ItemView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: Theme.radius))
-                            .contextMenu { Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(item.text) } }
+                            .contextMenu {
+                                Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(item.text) }
+                                ForEach(actions) { a in Button(a.title, systemImage: a.icon, action: a.run) }
+                            }
                     }
                 }
             }
@@ -355,6 +402,7 @@ struct ItemView: View {
                     .contextMenu {
                         Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(MarkdownView.plainText(item.text)) }
                         Button("Copy Markdown", systemImage: "text.document") { Clipboard.copy(item.text) }
+                        ForEach(actions) { a in Button(a.title, systemImage: a.icon, action: a.run) }
                     }
             }
         case .tool:
