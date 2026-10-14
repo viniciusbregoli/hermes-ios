@@ -203,34 +203,48 @@ struct BotChatScreen: View {
 struct BotChatsSheet: View {
     let store: ChatStore
     let label: String
+    @State private var query = ""
+    @State private var search = SearchState()
+    @State private var renaming: SessionRow?
+    @State private var showArchived = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    if let id = store.canonicalId {
-                        row("Bot Chat", subtitle: "The one ongoing conversation", id: id, icon: "infinity")
+                if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    SearchResults(state: search, query: query) { hit in
+                        Button { pick(hit.id) } label: { SearchHitRow(hit: hit).foregroundStyle(Theme.foreground) }
                     }
-                    Button { pick(nil) } label: {
-                        Label("New chat with \(label)", systemImage: "square.and.pencil")
+                } else {
+                    Section {
+                        if let id = store.canonicalId {
+                            row("Bot Chat", subtitle: "The one ongoing conversation", id: id, icon: "infinity")
+                        }
+                        Button { pick(nil) } label: {
+                            Label("New chat with \(label)", systemImage: "square.and.pencil")
+                        }
+                        .keyboardShortcut("n", modifiers: .command)
                     }
-                    .keyboardShortcut("n", modifiers: .command)
+                    .listRowBackground(Theme.sidebar)
+                    Section("Other chats") {
+                        if store.sessionsLoaded, store.sessions.isEmpty {
+                            Text("None yet").foregroundStyle(Theme.muted)
+                        }
+                        ForEach(store.pinnedSessions + store.unpinnedSessions) { s in
+                            row(s.title.nonEmpty ?? "Untitled", subtitle: s.preview, id: s.id,
+                                icon: store.pinned.contains(s.id) ? "pin" : nil)
+                                .sessionActions(store, s, renaming: $renaming)
+                        }
+                    }
+                    .listRowBackground(Theme.sidebar)
+                    if store.sessionsLoaded { ArchivedEntry(shown: $showArchived) }
                 }
-                .listRowBackground(Theme.sidebar)
-                Section("Other chats") {
-                    if store.sessionsLoaded, store.sessions.isEmpty {
-                        Text("None yet").foregroundStyle(Theme.muted)
-                    }
-                    ForEach(store.sessions) { s in
-                        row(s.title.nonEmpty ?? "Untitled", subtitle: s.preview, id: s.id, icon: nil)
-                            .swipeActions {
-                                Button("Delete", role: .destructive) { Task { await store.delete(s.id) } }
-                            }
-                    }
-                }
-                .listRowBackground(Theme.sidebar)
             }
+            .searchable(text: $query, prompt: "Search messages")
+            .searchFetch(store, query, into: $search)
+            .renameAlert(store, $renaming)
+            .sheet(isPresented: $showArchived) { ArchivedChats(store: store) { pick($0) } }
             .overlay {
                 if !store.sessionsLoaded { ProgressView() }
             }
