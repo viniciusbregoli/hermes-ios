@@ -38,7 +38,7 @@ public struct Palette: Identifiable, Hashable, Sendable {
     /// The bubble uses the preset's `secondary` green so it stays visible on the near-black background.
     static let matrix = Palette(
         id: "matrix", name: "Matrix", light: nil,
-        dark: Slots(background: 0x000a00, foreground: 0x00ff41, sidebar: 0x001200, primary: 0x00ff41, muted: 0x1a8a30,
+        dark: Slots(background: 0x000a00, foreground: 0x00ff41, sidebar: 0x001200, primary: 0x00ff41, muted: 0x22a53c,
                     border: 0x003000, userBubble: 0x002800, destructive: 0xff003c, success: 0x00ba75, onPrimary: 0x000a00),
         monospaced: true)
 
