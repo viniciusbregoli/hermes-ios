@@ -95,7 +95,8 @@ public struct SlashSuggestion: Identifiable, Hashable, Sendable {
         let exact = typed.trimmingCharacters(in: .whitespaces).lowercased()
         var seen: Set<String> = []
         return (r["items"]?.array ?? []).compactMap { item in
-            guard let raw = item["text"]?.string?.nonEmpty else { return nil }
+            // An exact command match comes back with a trailing space ("usage ").
+            guard let raw = item["text"]?.string?.trimmingCharacters(in: .whitespaces).nonEmpty else { return nil }
             let text = argStage ? prefix + raw : (raw.hasPrefix("/") ? raw : "/" + raw)
             guard argStage || SlashCommand.listed(text) || text.lowercased() == exact, seen.insert(text).inserted else { return nil }
             let display = item["display"]?.string?.nonEmpty ?? raw

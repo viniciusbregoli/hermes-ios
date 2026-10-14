@@ -172,7 +172,7 @@ extension ChatStore {
     /// Fills in /btw and /bg cards; runs from `handleControls` for the open chat.
     func foldSlash(_ type: String, _ p: JSON) {
         guard type == "btw.complete" || type == "background.complete" else { return }
-        let text = p["text"]?.string ?? ""
+        let text = p["text"]?.string?.nonEmpty ?? "No answer came back."
         if let id = p["task_id"]?.string, let i = items.lastIndex(where: { $0.slash?.taskId == id }) {
             items[i].text = text
             items[i].slash?.pending = false

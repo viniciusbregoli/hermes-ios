@@ -41,7 +41,7 @@ struct SlashTests {
 
     @Test func suggestionsHideTerminalCommandsAndPlaceArguments() {
         let commands: JSON = ["replace_from": 1, "items": [
-            ["text": "/usage", "display": "/usage", "meta": "Token usage", "kind": "command"],
+            ["text": "usage ", "display": "/usage", "meta": "Token usage", "kind": "command"],
             ["text": "/verbose", "meta": "Tool progress"], ["text": "/reset", "meta": "alias"],
             ["text": "work", "meta": "\u{26A1} Do work", "kind": "skill"], ["text": "q", "meta": "alias"], ["text": "/usage", "meta": "dup"]]]
         let rows = SlashSuggestion.parse(commands, typed: "/u")
@@ -86,6 +86,8 @@ struct SlashTests {
         // A task this chat no longer has a card for still shows up.
         emit("background.complete", ["task_id": "bg_9", "text": "ok"])
         #expect(store.items.last?.kind == .side && store.items.last?.slash?.background == true && store.items.count == 3)
+        emit("btw.complete", ["task_id": "btw_2", "text": ""])
+        #expect(store.items.last?.text == "No answer came back.")
     }
 
     @Test func localCommandsAnswerWithoutTheGateway() async {
