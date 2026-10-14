@@ -12,13 +12,14 @@ It's a personal project: it isn't on the App Store, and it's installed from Xcod
 - **Composer**: photo, camera and file attachments, slash commands with autocomplete (skills, `/btw`, `/bg`, `/compress`, `/goal` and more), effort and Fast controls, approvals/YOLO per chat or for all chats, a queue with steer and redirect while a turn runs.
 - **Bots**: every Hermes profile with its avatar, each bot's permanent Bot Chat, @mentions, bot-to-bot messages, bot settings (photo, description, personality, model, skills and toolsets).
 - **Group chats**: rooms of 2 to 6 bots hosted by the gateway, so they keep going while the phone is locked.
+- **Activity**: one tab for what needs you (approvals, questions, failed room replies, answered inline), what is working (swipe to Stop), background commands with their output (swipe to Kill) and finished turns, across chats, bots and groups. The tab badge counts what needs you.
 - **Subagents**: a live tree per chat with a model badge for each subagent, its output, Steer and Stop, plus a Delegate action with Light / Standard / Heavy tiers (see the server plugin below).
 - **Organising**: full-text search, pins, archive, rename, edit and resend, retry, branch from any message, unread dots and notifications when a turn finishes.
 - **Routines**: Hermes cron jobs with schedules in plain words, run now, history and editing.
 - **Artifacts and export**: a gallery of the images and files the agent sent across recent chats, export of any chat to Markdown, and Read aloud with the Hermes voice or the on-device one.
 - **Look**: the desktop's Nous, Catppuccin (Latte / Mocha) and Matrix themes, light and dark, and a chat text size from 80% to 165%.
 - **Show touches**: a Settings toggle that draws a dot under each finger, so screen recordings of bugs show where you tapped.
-- **Keyboard**: shortcuts for the common actions when an iPad or hardware keyboard is attached (⌘N new chat, ⌘↩ send, ⌘. stop, ⌘K commands, ⌘F search, ⌘1 to ⌘3 tabs).
+- **Keyboard**: shortcuts for the common actions when an iPad or hardware keyboard is attached (⌘N new chat, ⌘↩ send, ⌘. stop, ⌘K commands, ⌘F search, ⌘1 to ⌘4 tabs).
 
 ## Requirements
 
