@@ -22,6 +22,7 @@ struct SessionActions: ViewModifier {
     let store: ChatStore
     let session: SessionRow
     @Binding var renaming: SessionRow?
+    @State private var deleting: SessionRow?
 
     func body(content: Content) -> some View {
         let pinned = store.pinned.contains(session.id)
@@ -31,7 +32,7 @@ struct SessionActions: ViewModifier {
                     .tint(Theme.primary)
             }
             .swipeActions(edge: .trailing) {
-                Button(role: .destructive) { delete() } label: { Label("Delete", systemImage: "trash") }
+                Button { deleting = session } label: { Label("Delete", systemImage: "trash") }
                     .tint(Theme.destructive)
                 Button { archive() } label: { Label("Archive", systemImage: "archivebox") }
                     .tint(Theme.muted)
@@ -40,13 +41,35 @@ struct SessionActions: ViewModifier {
                 Button("Rename", systemImage: "pencil") { renaming = session }
                 Button(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") { pin(!pinned) }
                 Button("Archive", systemImage: "archivebox") { archive() }
-                Button("Delete", systemImage: "trash", role: .destructive) { delete() }
+                Button("Delete", systemImage: "trash", role: .destructive) { deleting = session }
             }
+            .confirmDelete($deleting) { id in Task { await store.delete(id) } }
     }
 
     private func pin(_ on: Bool) { Task { await store.setPinned(session.id, on) } }
     private func archive() { Task { await store.setArchived(session.id, true) } }
-    private func delete() { Task { await store.delete(session.id) } }
+}
+
+extension View {
+    /// Asks before deleting `chat` while it is set; Cancel leaves the chat alone.
+    func confirmDelete(_ chat: Binding<SessionRow?>, delete: @escaping (String) -> Void) -> some View {
+        confirmationDialog("Delete \"\(chat.wrappedValue?.title.nonEmpty ?? "Untitled")\"?",
+                           isPresented: Binding(get: { chat.wrappedValue != nil }, set: { if !$0 { chat.wrappedValue = nil } }),
+                           titleVisibility: .visible, presenting: chat.wrappedValue) { row in
+            Button("Delete", role: .destructive) { delete(row.id) }
+        } message: { _ in
+            Text("The chat and its messages are deleted from your Hermes server.")
+        }
+    }
+
+    /// Shows a failure of `store` (a delete that was refused) from inside a sheet, where the root's alert can't appear.
+    func storeAlert(_ store: ChatStore) -> some View {
+        alert("Hermes", isPresented: Binding(get: { store.alert != nil }, set: { if !$0 { store.alert = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(store.alert ?? "")
+        }
+    }
 }
 
 struct RenameAlert: ViewModifier {
@@ -158,6 +181,7 @@ struct ArchivedChats: View {
     let open: (String) -> Void
     @State private var rows: [SessionRow]?
     @State private var error: String?
+    @State private var deleting: SessionRow?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -175,14 +199,16 @@ struct ArchivedChats: View {
                         .tint(Theme.primary)
                 }
                 .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) { delete(s.id) } label: { Label("Delete", systemImage: "trash") }
+                    Button { deleting = s } label: { Label("Delete", systemImage: "trash") }
                         .tint(Theme.destructive)
                 }
                 .contextMenu {
                     Button("Unarchive", systemImage: "tray.and.arrow.up") { unarchive(s.id) }
-                    Button("Delete", systemImage: "trash", role: .destructive) { delete(s.id) }
+                    Button("Delete", systemImage: "trash", role: .destructive) { deleting = s }
                 }
             }
+            .confirmDelete($deleting) { delete($0) }
+            .storeAlert(store)
             .overlay {
                 if let error {
                     ContentUnavailableView("Couldn't load archived chats", systemImage: "exclamationmark.triangle",
@@ -224,7 +250,9 @@ struct ArchivedChats: View {
 
     private func delete(_ id: String) {
         rows?.removeAll { $0.id == id }
-        Task { await store.delete(id) }
+        Task {
+            if await !store.delete(id) { await load() }
+        }
     }
 }
 

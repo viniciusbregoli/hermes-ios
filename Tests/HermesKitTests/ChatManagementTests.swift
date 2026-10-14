@@ -114,4 +114,14 @@ struct ChatManagementTests {
         #expect(ChatStore.branchCount(store.items, through: ids.last!) == 4)
         #expect(ChatStore.branchCount(store.items, through: "missing") == 0)
     }
+
+    @Test func refusedDeleteBringsTheRowBackWhereItWas() async {
+        let rows = ["a", "b", "c"].map { SessionRow(id: $0, title: $0, preview: "", startedAt: Date(), messageCount: 1) }
+        store.sessions = rows
+        // The gateway is offline, so the server call fails.
+        let deleted = await store.delete("b")
+        #expect(!deleted)
+        #expect(store.sessions.map(\.id) == ["a", "b", "c"])
+        #expect(store.alert != nil)
+    }
 }

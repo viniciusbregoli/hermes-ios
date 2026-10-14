@@ -263,6 +263,8 @@ struct MainView: View {
         // A branch opens from inside the chat; follow it so the list highlights the chat on screen.
         .onChange(of: store.selectedId) { _, id in
             if let id, selection != nil, selection != Self.newChat, selection != id { selection = id }
+            // The open chat was deleted: nothing is on screen any more, so nothing stays selected.
+            if id == nil, selection != Self.newChat { selection = nil }
         }
         .alert("Hermes", isPresented: Binding(get: { store.alert != nil }, set: { if !$0 { store.alert = nil } })) {
             Button("OK", role: .cancel) {}

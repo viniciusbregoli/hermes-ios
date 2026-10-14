@@ -256,6 +256,7 @@ struct BotChatsSheet: View {
             .searchable(text: $query, prompt: "Search messages")
             .searchFetch(store, query, into: $search)
             .renameAlert(store, $renaming)
+            .storeAlert(store)
             .sheet(isPresented: $showArchived) { ArchivedChats(store: store) { pick($0) } }
             .overlay {
                 if !store.sessionsLoaded { ProgressView() }
