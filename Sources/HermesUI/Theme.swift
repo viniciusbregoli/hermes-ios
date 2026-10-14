@@ -105,7 +105,8 @@ public enum Appearance: String, CaseIterable, Identifiable {
 public enum ChatTextSize {
     public static let key = "chatTextSize"
     static let sizes: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge, .accessibility1]
-    static let percents = [80, 90, 100, 110, 120, 135, 150, 170]
+    // Body text at each size relative to `.large` (14 to 28pt against 17pt), rounded.
+    static let percents = [80, 90, 95, 100, 110, 125, 135, 165]
     /// `.large`, the system default.
     public static let standard = 3
 
