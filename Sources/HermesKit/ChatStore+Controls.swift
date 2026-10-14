@@ -113,6 +113,21 @@ extension ChatStore {
         if let r = await configSet("yolo", on ? "1" : "0") { yolo = r["value"]?.string == "1" }
     }
 
+    /// Turns approvals on or off for every chat in the Hermes config (approvals.mode manual/off).
+    /// The server re-sends session.info to live sessions; the local flags update now for chats without one.
+    public func setApprovalsRequired(_ on: Bool) async {
+        var params: [String: JSON] = ["key": "yolo", "scope": "global", "value": .string(on ? "0" : "1")]
+        if let sid = runtimeId { params["session_id"] = .string(sid) }
+        do {
+            let r = try await gateway.call("config.set", params)
+            let off = r["value"]?.string == "1"
+            approvalMode = off ? "off" : "manual"
+            yolo = off
+        } catch {
+            alert = error.localizedDescription
+        }
+    }
+
     public func retry() async {
         guard let text = retryText else { return }
         await send(text)
