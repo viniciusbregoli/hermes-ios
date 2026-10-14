@@ -25,6 +25,8 @@ public struct GatewayEvent: Sendable {
 
 /// A request the server sends us (approval, clarify, sudo, ...). Answer it with `Gateway.respond`.
 public struct ServerRequest: Identifiable, Sendable {
+    /// The methods that ask the user something; the others are desktop-only surfaces.
+    static let prompts: Set<String> = ["approval", "clarify", "sudo", "secret"]
     public let rpcId: JSON
     public let method: String
     public let params: JSON
@@ -63,6 +65,9 @@ public final class Gateway {
     public var credentials: Credentials? {
         didSet { if credentials != oldValue { Keychain.save(credentials) } }
     }
+    /// Prompts for chats no store has attached (the user left them mid-turn). The server keeps them open
+    /// until answered or withdrawn, so they wait here for their chat to attach again or to be answered.
+    public private(set) var inbox: [ServerRequest] = []
 
     private struct Listener {
         weak var owner: AnyObject?
@@ -101,10 +106,12 @@ public final class Gateway {
         teardown(GatewayError.offline)
         credentials = nil
         status = .signedOut
+        inbox = []
     }
 
     /// Registers callbacks that live as long as `owner`. Every listener sees every event;
-    /// a server request goes to the first listener that returns true, and is rejected if none does.
+    /// a server request goes to the first listener that returns true; if none does, a prompt goes to `inbox`
+    /// and anything else is rejected.
     /// `connected` fires after every successful handshake, including reconnects.
     public func listen(_ owner: AnyObject, event: @escaping (GatewayEvent) -> Void = { _ in },
                        request: @escaping (ServerRequest) -> Bool = { _ in false }, connected: @escaping () -> Void = {}) {
@@ -114,12 +121,31 @@ public final class Gateway {
 
     func dispatch(_ event: GatewayEvent) {
         listeners.removeAll { $0.owner == nil }
+        if event.type == "request.cancel" || event.type == "approval.cancelled" {
+            let id = event.payload["request_id"]?.string ?? event.payload["id"]?.string
+            inbox.removeAll { $0.id == id || $0.rpcId.string == id }
+        }
         listeners.forEach { $0.event(event) }
     }
 
     func dispatch(_ request: ServerRequest) {
         listeners.removeAll { $0.owner == nil }
-        if !listeners.contains(where: { $0.request(request) }) { reject(request) }
+        guard !listeners.contains(where: { $0.request(request) }) else { return }
+        // Rejecting would settle the prompt as failed: 4404 means "shown nowhere" to the server.
+        if ServerRequest.prompts.contains(request.method) { park([request]) } else { reject(request) }
+    }
+
+    func park(_ requests: [ServerRequest]) {
+        for r in requests {
+            inbox.removeAll { $0.id == r.id }
+            inbox.append(r)
+        }
+    }
+
+    /// Removes and returns the parked prompts of a runtime session.
+    func take(session: String) -> [ServerRequest] {
+        defer { inbox.removeAll { $0.sessionId == session } }
+        return inbox.filter { $0.sessionId == session }
     }
 
     public func call(_ method: String, _ params: [String: JSON] = [:]) async throws -> JSON {
@@ -136,6 +162,7 @@ public final class Gateway {
     public func respond(_ request: ServerRequest, result: JSON) {
         guard let ws = socket else { return }
         send(["jsonrpc": "2.0", "id": request.rpcId, "result": result], on: ws) { _ in }
+        inbox.removeAll { $0.rpcId == request.rpcId }
     }
 
     public func reject(_ request: ServerRequest, code: Int = 4404, message: String = "not shown on mobile") {
@@ -212,7 +239,10 @@ public final class Gateway {
             } else if method == "event", let p = msg["params"] {
                 let event = GatewayEvent(params: p)
                 if event.type == "gateway.ready" {
-                    replayEpoch = event.payload["replay_epoch"]?.string
+                    let epoch = event.payload["replay_epoch"]?.string
+                    // A new server process has none of the old prompts open.
+                    if epoch != replayEpoch { inbox = [] }
+                    replayEpoch = epoch
                     handshake()
                 } else {
                     dispatch(event)

@@ -104,6 +104,48 @@ struct GatewayRoutingTests {
 }
 
 @MainActor
+struct InboxTests {
+    let gateway = Gateway(credentials: nil)
+    let store: ChatStore
+
+    init() {
+        store = ChatStore(gateway: gateway)
+        store.apply(snapshot: ["session_id": "rt1"])
+        gateway.dispatch(ServerRequest(rpcId: "srq-1", method: "approval", params: ["session_id": "rt-left", "request_id": "a1"]))
+    }
+
+    @Test func unclaimedPromptWaitsInTheInbox() {
+        gateway.dispatch(ServerRequest(rpcId: "srq-2", method: "preview.open", params: ["session_id": "rt-left"]))
+        #expect(store.requests.isEmpty)
+        #expect(gateway.inbox.map(\.id) == ["a1"])
+    }
+
+    @Test func withdrawnPromptLeavesTheInbox() {
+        gateway.dispatch(ServerRequest(rpcId: "srq-3", method: "clarify", params: ["session_id": "rt-left"]))
+        gateway.dispatch(GatewayEvent(type: "request.cancel", sessionId: "rt-left", payload: ["id": "srq-1", "method": "approval", "reason": "timeout"]))
+        #expect(gateway.inbox.map(\.id) == ["srq-3"])
+        gateway.dispatch(GatewayEvent(type: "request.cancel", sessionId: "rt-left", payload: ["id": "srq-3", "method": "clarify", "reason": "answered"]))
+        #expect(gateway.inbox.isEmpty)
+    }
+
+    @Test func attachingTheChatShowsItsPrompts() {
+        store.apply(snapshot: ["session_id": "rt-left", "open_requests": [
+            ["id": "srq-1", "method": "approval", "params": ["session_id": "rt-left", "request_id": "a1"]],
+        ]])
+        #expect(store.requests.map(\.id) == ["a1"])
+        #expect(gateway.inbox.isEmpty)
+    }
+
+    @Test func leavingARunningChatKeepsItsPrompts() async {
+        store.apply(snapshot: ["session_id": "rt-left", "running": true])
+        #expect(store.requests.map(\.id) == ["a1"])
+        await store.open("another")
+        #expect(store.requests.isEmpty)
+        #expect(gateway.inbox.map(\.id) == ["a1"])
+    }
+}
+
+@MainActor
 struct BotHistoryTests {
     @Test func agentDeliveriesAndMentionNotesInHistory() {
         let store = ChatStore(gateway: Gateway(credentials: nil), profile: "bills")
