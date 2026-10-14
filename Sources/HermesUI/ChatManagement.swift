@@ -79,10 +79,14 @@ struct RenameAlert: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .alert("Rename chat", isPresented: Binding(get: { session != nil }, set: { if !$0 { session = nil } })) {
+            // The alert clears `session` as it dismisses, and `onChange` below then resets `title`. The button therefore
+            // takes the row from `presenting` and copies `title` before the Task starts, or both would be gone by then.
+            .alert("Rename chat", isPresented: Binding(get: { session != nil }, set: { if !$0 { session = nil } }),
+                   presenting: session) { row in
                 TextField("Title", text: $title)
                 Button("Rename") {
-                    if let id = session?.id { Task { await store.rename(id, to: title) } }
+                    let newTitle = title
+                    Task { await store.rename(row.id, to: newTitle) }
                 }
                 .keyboardShortcut(.defaultAction)
                 Button("Cancel", role: .cancel) {}
