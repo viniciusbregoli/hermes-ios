@@ -166,6 +166,59 @@ struct ActivityTests {
         #expect(activity.needsYouCount == 2)
         #expect(activity.items.first { $0.id == "need-srq-1" }?.target == .chat("s1"))
     }
+
+    @Test func pollsRecentAndFlaggedRoomsAndFoldsTheirActions() async {
+        let gateway = Gateway(credentials: nil)
+        let now = Date(timeIntervalSince1970: 10_000)
+        let groups = GroupStore(gateway: gateway, defaults: UserDefaults(suiteName: #function)!)
+        groups.rooms = [Room(id: "fresh", name: "Ops", members: [], updatedAt: now.addingTimeInterval(-60)),
+                        Room(id: "stale", name: "Old", members: [], updatedAt: now.addingTimeInterval(-7200)),
+                        Room(id: "busy", name: "Lab", members: [], updatedAt: now.addingTimeInterval(-7200))]
+        groups.store(for: "busy").apply(state: ["driver_status": ["running": true, "working": true]])
+        let activity = ActivityStore(gateway: gateway, groups: groups)
+        let sent = Sent()
+        activity.call = { method, params in
+            await sent.add(method, params)
+            guard params["room_id"] == "fresh" else { return ["driver_status": ["running": true, "working": true]] }
+            return ["driver_status": ["running": true, "working": false, "blocked": true, "pending_actions": [
+                ["kind": "retry", "task_id": "t-1"],
+                ["kind": "approval", "task_id": "t-2", "member_id": "m", "request_id": "q", "approval": ["command": "reboot"]],
+            ]]]
+        }
+
+        await activity.refreshRooms(now: now)
+        #expect(Set(await sent.calls.map { $0.params["room_id"]?.string ?? "" }) == ["fresh", "busy"])
+        #expect(await sent.calls.allSatisfy { $0.method == "groups.state" })
+
+        let items = activity.items
+        #expect(items.map(\.section) == [.needsYou, .needsYou, .working])
+        guard case .needsYou(.room(let first)) = items[0].kind, case .needsYou(.room(let second)) = items[1].kind else {
+            Issue.record("not room actions"); return
+        }
+        #expect(Set([first.kind, second.kind]) == [.approval, .retry])
+        #expect(items[0...1].allSatisfy { $0.target == .room("fresh") && $0.title == "Ops" })
+        #expect(items[2].target == .room("busy") && items[2].kind == .working(startedAt: nil))
+    }
+
+    @Test func botChatPromptsAndTasksAppearAndAnsweringClearsTheCard() {
+        let gateway = Gateway(credentials: nil)
+        let bots = BotStore(gateway: gateway, defaults: UserDefaults(suiteName: #function)!)
+        let chat = bots.chat(for: "research")
+        #expect(bots.chat(for: "research") === chat)
+        chat.apply(snapshot: ["session_id": "rt-bot", "info": ["stored_session_id": "b1"], "open_requests": [
+            ["id": "srq-9", "method": "clarify", "params": ["session_id": "rt-bot", "question": "Which paper?"]],
+        ]])
+        chat.items.append(ChatItem(id: "side-1", kind: .side, date: Date(timeIntervalSince1970: 5),
+                                   slash: SlashNote(header: "summarize the thread", taskId: "bg_1", background: true, pending: true)))
+        let activity = ActivityStore(gateway: gateway, bots: bots)
+
+        let byId = Dictionary(uniqueKeysWithValues: activity.items.map { ($0.id, $0) })
+        #expect(byId["need-srq-9"]?.target == .bot("research") && byId["need-srq-9"]?.detail == "Which paper?")
+        #expect(byId["bg-bg_1"]?.target == .bot("research") && byId["bg-bg_1"]?.detail == "summarize the thread")
+
+        activity.answer(chat.requests[0], result: ["answer": "the first"])
+        #expect(chat.requests.isEmpty && activity.needsYouCount == 0)
+    }
 }
 
 private actor Sent {

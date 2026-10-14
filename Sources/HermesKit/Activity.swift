@@ -11,7 +11,7 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
     public enum Need: Hashable, Sendable {
         /// Answer with `ActivityStore.answer`.
         case request(ServerRequest)
-        /// A room member's approval; answer with `ActivityStore.approve`.
+        /// A room member's approval (`ActivityStore.approve`) or a turn to retry (`ActivityStore.retry`).
         case room(RoomAction)
     }
 
@@ -96,19 +96,25 @@ public struct BackgroundProcess: Hashable, Sendable {
     /// `process.list` for each session, at most `limit` at a time. A session whose call fails is left out.
     static func fetch(_ sessions: [String], limit: Int = 4, now: Date = Date(),
                       list: @escaping @Sendable (String) async throws -> JSON) async -> [String: [BackgroundProcess]] {
-        await withTaskGroup(of: (String, JSON?).self) { group in
-            var queue = sessions.makeIterator()
-            for _ in 0..<limit {
-                guard let sid = queue.next() else { break }
-                group.addTask { (sid, try? await list(sid)) }
-            }
-            var out: [String: [BackgroundProcess]] = [:]
-            for await (sid, r) in group {
-                if let r { out[sid] = parse(r["processes"], session: sid, now: now) }
-                if let sid = queue.next() { group.addTask { (sid, try? await list(sid)) } }
-            }
-            return out
+        let found = await gather(sessions, limit: limit, list)
+        return Dictionary(uniqueKeysWithValues: found.map { ($0.key, parse($0.value["processes"], session: $0.key, now: now)) })
+    }
+}
+
+/// Calls `read` for each key, at most `limit` at a time. A key whose call fails is left out.
+func gather(_ keys: [String], limit: Int = 4, _ read: @escaping @Sendable (String) async throws -> JSON) async -> [String: JSON] {
+    await withTaskGroup(of: (String, JSON?).self) { group in
+        var queue = keys.makeIterator()
+        for _ in 0..<limit {
+            guard let key = queue.next() else { break }
+            group.addTask { (key, try? await read(key)) }
         }
+        var out: [String: JSON] = [:]
+        for await (key, r) in group {
+            if let r { out[key] = r }
+            if let key = queue.next() { group.addTask { (key, try? await read(key)) } }
+        }
+        return out
     }
 }
 
@@ -136,7 +142,7 @@ struct LiveSession: Hashable, Sendable {
 
 /// Everything the Activity tab is built from, read from the stores at one moment.
 struct ActivitySnapshot {
-    /// The chat open in the Chats tab.
+    /// A chat store this app holds: the Chats tab's open chat, or a bot's chat.
     struct OpenChat {
         var stored: String?
         var runtime: String?
@@ -144,6 +150,7 @@ struct ActivitySnapshot {
         var startedAt: Date?
         /// Pending /bg cards: task id, prompt, when sent.
         var tasks: [(id: String, prompt: String, at: Date)] = []
+        /// Only chats this app is attached to: `subagent.list` answers 4001 for any other session.
         var subagents = 0
     }
 
@@ -152,6 +159,8 @@ struct ActivitySnapshot {
     /// Open requests read with `session.events.since`.
     var fetched: [ServerRequest] = []
     var open = OpenChat()
+    /// Bot chats opened this launch, by bot name.
+    var botOpen: [String: OpenChat] = [:]
     /// Chats tab titles by stored id.
     var chats: [String: String] = [:]
     var chatUnread: [String: Date] = [:]
@@ -162,7 +171,7 @@ struct ActivitySnapshot {
     var botUnread: [String: Date] = [:]
     var rooms: [Room] = []
     var roomUnread: Set<String> = []
-    var roomStatus: [String: (working: Bool, approvals: [RoomAction])] = [:]
+    var roomStatus: [String: (working: Bool, actions: [RoomAction])] = [:]
     var processes: [BackgroundProcess] = []
     var now = Date()
 }
@@ -184,7 +193,8 @@ enum ActivityFold {
         var busy: Set<ActivityItem.Target> = []
         var asking: Set<String> = []
         var seen: Set<String> = []
-        for r in s.open.requests + s.inbox + s.fetched where seen.insert(r.id).inserted {
+        let bots = s.botOpen.sorted { $0.key < $1.key }
+        for r in s.open.requests + bots.flatMap(\.value.requests) + s.inbox + s.fetched where seen.insert(r.id).inserted {
             let (target, title) = place(runtime: r.sessionId)
             asking.insert(r.sessionId)
             if let target { busy.insert(target) }
@@ -192,19 +202,22 @@ enum ActivityFold {
                                     detail: question(r), date: byRuntime[r.sessionId]?.lastActive ?? .distantPast))
         }
         for room in s.rooms {
-            for a in s.roomStatus[room.id]?.approvals ?? [] {
+            for a in s.roomStatus[room.id]?.actions ?? [] {
                 busy.insert(.room(room.id))
-                let what = a.approval["command"]?.string?.nonEmpty ?? a.approval["description"]?.string ?? ""
+                let what = a.kind == .retry ? "A reply didn't finish; retry it"
+                    : a.approval["command"]?.string?.nonEmpty ?? a.approval["description"]?.string ?? ""
                 out.append(ActivityItem(id: "need-\(a.id)", kind: .needsYou(.room(a)), target: .room(room.id), title: room.name,
                                         detail: oneLine(what), date: room.updatedAt))
             }
         }
 
+        var started: [String: Date] = [:]
+        for o in [s.open] + bots.map(\.value) { if let rt = o.runtime, let at = o.startedAt { started[rt] = at } }
         // A waiting row whose question never reached us still has an agent on it, so it counts as working.
         for row in s.live where ["starting", "working", "waiting"].contains(row.status) && !asking.contains(row.id) {
             let (target, title) = place(runtime: row.id)
             if let target { guard busy.insert(target).inserted else { continue } }
-            out.append(ActivityItem(id: "work-\(row.id)", kind: .working(startedAt: row.id == s.open.runtime ? s.open.startedAt : nil),
+            out.append(ActivityItem(id: "work-\(row.id)", kind: .working(startedAt: started[row.id]),
                                     target: target, title: title, detail: oneLine(row.preview), date: row.lastActive))
         }
         for room in s.rooms where s.roomStatus[room.id]?.working == true && busy.insert(.room(room.id)).inserted {
@@ -212,17 +225,22 @@ enum ActivityFold {
                                     detail: "", date: room.updatedAt))
         }
 
-        if let stored = s.open.stored {
-            let title = s.chats[stored]?.nonEmpty ?? "Chat"
-            for t in s.open.tasks {
-                out.append(ActivityItem(id: "bg-\(t.id)", kind: .background(.task(t.id)), target: .chat(stored), title: title,
+        func background(_ o: ActivitySnapshot.OpenChat, key: String, target: ActivityItem.Target, title: String) {
+            for t in o.tasks {
+                out.append(ActivityItem(id: "bg-\(t.id)", kind: .background(.task(t.id)), target: target, title: title,
                                         detail: oneLine(t.prompt), date: t.at))
             }
-            if s.open.subagents > 0 {
-                out.append(ActivityItem(id: "subagents-\(stored)", kind: .background(.subagents(s.open.subagents)), target: .chat(stored),
-                                        title: title, detail: "\(s.open.subagents) subagent\(s.open.subagents == 1 ? "" : "s") running",
-                                        date: s.open.startedAt ?? .distantPast))
+            if o.subagents > 0 {
+                out.append(ActivityItem(id: "subagents-\(key)", kind: .background(.subagents(o.subagents)), target: target,
+                                        title: title, detail: "\(o.subagents) subagent\(o.subagents == 1 ? "" : "s") running",
+                                        date: o.startedAt ?? .distantPast))
             }
+        }
+        if let stored = s.open.stored {
+            background(s.open, key: stored, target: .chat(stored), title: s.chats[stored]?.nonEmpty ?? "Chat")
+        }
+        for (bot, o) in bots {
+            background(o, key: "bot-\(bot)", target: .bot(bot), title: s.botLabels[bot] ?? bot)
         }
 
         for p in s.processes where p.shown(at: s.now) {
@@ -336,8 +354,8 @@ public final class ActivityStore {
         let rows = LiveSession.parse(r["sessions"])
         let parked = gateway.inbox
         var check = Set(parked.map(\.sessionId))
-        let held = chats.map { c in Set(c.requests.map(\.sessionId)) } ?? []
-        check.formUnion(rows.filter { $0.status == "waiting" && !held.contains($0.id) }.map(\.id))
+        let claimed = Set(held.flatMap { $0.requests.map(\.sessionId) })
+        check.formUnion(rows.filter { $0.status == "waiting" && !claimed.contains($0.id) }.map(\.id))
 
         var open: [String: [ServerRequest]] = [:]
         for sid in check {
@@ -365,6 +383,23 @@ public final class ActivityStore {
         // A failed read keeps the last list of a session that is still live.
         for sid in watched where found[sid] == nil { found[sid] = processes[sid] }
         processes = found
+
+        await groups?.refresh()
+        await refreshRooms(now: now)
+    }
+
+    /// `groups.state` for rooms active in the last 10 minutes or last seen working or waiting on the user,
+    /// at most 4 at a time. A room on screen polls itself.
+    func refreshRooms(now: Date = Date()) async {
+        guard let groups else { return }
+        let watched = groups.rooms.filter { room in
+            let store = groups.stores[room.id]
+            guard store?.visible != true else { return false }
+            return now.timeIntervalSince(room.updatedAt) < 600 || store.map { $0.working || !$0.status.actions.isEmpty } == true
+        }.map(\.id)
+        let call = call
+        let states = await gather(watched) { try await call("groups.state", ["room_id": .string($0)]) }
+        for (id, state) in states { groups.store(for: id).apply(state: state) }
     }
 
     /// Kills one background process (`process.kill`; never `process.stop`, which kills them all).
@@ -375,8 +410,8 @@ public final class ActivityStore {
 
     /// Answers through the chat that shows the prompt when it is open, else straight to the server.
     public func answer(_ request: ServerRequest, result: JSON) {
-        if let chats, chats.requests.contains(where: { $0.id == request.id }) {
-            chats.answer(request, result: result)
+        if let chat = held.first(where: { $0.requests.contains { $0.id == request.id } }) {
+            chat.answer(request, result: result)
         } else {
             gateway.respond(request, result: result)
         }
@@ -387,29 +422,48 @@ public final class ActivityStore {
         await groups?.store(for: room).approve(action, choice: choice)
     }
 
+    /// Reruns a room turn that didn't finish (a `.retry` action).
+    public func retry(_ action: RoomAction, in room: String) async {
+        await groups?.store(for: room).retry(action.taskId)
+    }
+
+    /// The chat stores that hold their session's prompts: the Chats tab's and every bot chat opened this launch.
+    private var held: [ChatStore] {
+        [chats].compactMap { $0 } + (bots?.chats.sorted { $0.key < $1.key }.map(\.value) ?? [])
+    }
+
+    private static func open(_ c: ChatStore) -> ActivitySnapshot.OpenChat {
+        var o = ActivitySnapshot.OpenChat(stored: c.selectedId, runtime: c.runtimeId, requests: c.requests,
+                                          startedAt: c.turnStartedAt, subagents: c.subagents.active)
+        o.tasks = c.items.compactMap { i in
+            guard let n = i.slash, n.background, n.pending, let id = n.taskId else { return nil }
+            return (id, n.header, i.date ?? .distantPast)
+        }
+        return o
+    }
+
     var snapshot: ActivitySnapshot {
         var s = ActivitySnapshot(live: live, inbox: gateway.inbox, fetched: fetched.values.flatMap { $0 })
         s.processes = processes.values.flatMap { $0 }
         if let chats {
             s.chats = Dictionary(chats.sessions.map { ($0.id, $0.title) }) { a, _ in a }
             s.chatUnread = chats.unread
-            s.open = .init(stored: chats.selectedId, runtime: chats.runtimeId, requests: chats.requests,
-                           startedAt: chats.turnStartedAt, subagents: chats.subagents.active)
-            s.open.tasks = chats.items.compactMap { i in
-                guard let n = i.slash, n.background, n.pending, let id = n.taskId else { return nil }
-                return (id, n.header, i.date ?? .distantPast)
-            }
+            s.open = Self.open(chats)
         }
         if let bots {
             s.botChats = Dictionary(bots.bots.compactMap { b in b.canonicalId.map { ($0, b.name) } }) { a, _ in a }
             s.botRuntimes = bots.runtimes
             s.botLabels = Dictionary(bots.bots.map { ($0.name, $0.label) }) { a, _ in a }
             s.botUnread = bots.unread
+            for (name, c) in bots.chats {
+                s.botOpen[name] = Self.open(c)
+                if let rt = c.runtimeId { s.botRuntimes[rt] = name }
+            }
         }
         if let groups {
             s.rooms = groups.rooms
             s.roomUnread = Set(groups.rooms.filter(groups.unread).map(\.id))
-            s.roomStatus = groups.stores.mapValues { ($0.working, $0.status.approvals) }
+            s.roomStatus = groups.stores.mapValues { ($0.working, $0.status.actions) }
         }
         return s
     }
