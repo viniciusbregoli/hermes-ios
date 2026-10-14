@@ -122,7 +122,7 @@ struct GroupRow: View {
         let who = mark.speaker.map { profile in
             room.members.first { $0.profile == profile }.map(bots.label) ?? profile
         } ?? "You"
-        return "\(who): \(mark.preview)"
+        return "\(who): \(MarkdownView.plainText(mark.preview))"
     }
 }
 
@@ -283,6 +283,8 @@ struct RoomView: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var confirmDisband = false
+    /// Bumped to scroll to the end (see EndScroller).
+    @State private var endRequests = 0
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
 
@@ -305,9 +307,19 @@ struct RoomView: View {
                 .padding(.bottom, store.working ? 40 : 0)
             }
             .defaultScrollAnchor(.bottom)
+            .modifier(EndScroller(requests: endRequests))
             .scrollDismissesKeyboard(.immediately)
-            .onChange(of: rows.last) {
-                Task { @MainActor in withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(Self.end, anchor: .bottom) } }
+            // The working capsule's inset changes the content height too, so follow both.
+            .onChange(of: EndKey(last: rows.last?.id, working: store.working)) {
+                Task { @MainActor in
+                    // Let the new rows and inset lay out first, or the scroll stops short of them.
+                    try? await Task.sleep(for: .milliseconds(100))
+                    if #available(iOS 18, macOS 15, *) {
+                        endRequests += 1
+                    } else {
+                        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(Self.end, anchor: .bottom) }
+                    }
+                }
             }
             .overlay {
                 if store.gone {
@@ -406,6 +418,7 @@ struct RoomView: View {
     }
 
     private struct PollKey: Equatable { let online: Bool; let active: Bool }
+    private struct EndKey: Equatable { let last: Int?; let working: Bool }
 
     private var draftKey: String { "group/\(store.room.id)" }
 
