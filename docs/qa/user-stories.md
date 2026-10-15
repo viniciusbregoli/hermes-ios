@@ -295,12 +295,12 @@ Steps:
 4. Go back to chat A and turn the switch off.
 
 Expected:
-1. The menu shows "Approvals: on for all chats" with a "Require approvals in all chats" toggle, and "Skip approvals in this chat".
+1. The menu shows only "Skip approvals in this chat".
 2. The pill turns red and reads "YOLO" with a bolt; the UI tree labels it "Approvals off".
 3. Chat B's pill still reads "Approvals".
 4. Chat A's pill reads "Approvals" again.
 
-Care: do not touch "Require approvals in all chats" here. It changes approvals for every chat and bot on the gateway, including the owner's running ones. Only with the owner's go-ahead: turn it off, check that the per-chat switch greys out and every chat shows YOLO, then turn it back on in the same minute.
+Care: do not touch "Require approvals in all chats" (Settings > Approvals). It changes approvals for every chat and bot on the gateway, including the owner's running ones. Only with the owner's go-ahead: turn it off, check that the per-chat switch greys out and every chat shows YOLO, then turn it back on in the same minute.
 
 ### CO-07 Queue a follow-up while the agent works
 
@@ -1042,7 +1042,7 @@ Preconditions: CH-02's and CH-05's chats.
 Steps:
 1. Settings > Chat text size: move the slider to the smallest step.
 2. Open CH-05's chat.
-3. Move the slider to the largest step (170%) and open CH-02's and CH-05's chats.
+3. Move the slider to the largest step (165%) and open CH-02's and CH-05's chats.
 4. Put it back to 100%.
 
 Expected:
