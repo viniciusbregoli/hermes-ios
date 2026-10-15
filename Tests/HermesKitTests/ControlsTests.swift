@@ -60,6 +60,25 @@ struct ControlsTests {
         #expect(Usage([:]) == nil)
     }
 
+    @Test func cachedInputIsThePromptBeyondInput() {
+        #expect(Usage(["input": 20_800, "prompt": 118_300, "output": 300, "total": 118_600])?.cached == 97_500)
+        #expect(Usage(["input": 500, "output": 10])?.cached == 0)
+    }
+
+    @Test func approvalsForEveryChatUseTheGlobalScope() async throws {
+        var seen: [(String, [String: JSON])] = []
+        gateway.stub = { method, params in
+            seen.append((method, params))
+            return method == "config.get" ? ["value": "off"] : ["value": params["value"] ?? nil]
+        }
+        #expect(try await gateway.approvalsRequired() == false)
+        #expect(try await gateway.setApprovalsRequired(true) == true)
+        #expect(try await gateway.setApprovalsRequired(false) == false)
+        #expect(seen[0].1["key"] == "approvals.mode")
+        #expect(seen[1].1["scope"] == "global" && seen[1].1["value"] == "0" && seen[1].1["session_id"] == nil)
+        #expect(seen[2].1["value"] == "1")
+    }
+
     @Test func infoSetsControlsOnlyWhenPresent() {
         emit("session.info", ["reasoning_effort": "high", "fast": true, "yolo": true, "approval_mode": "manual"])
         #expect(store.reasoningEffort == "high" && store.fast && store.yolo && store.approvalsOff)
