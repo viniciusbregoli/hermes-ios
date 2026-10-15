@@ -538,6 +538,9 @@ public enum ScrollFollow {
         case disclosed(atEnd: Bool, dragging: Bool)
     }
 
+    /// Whether a drag can unlatch following: with nothing loaded yet there is nothing to leave the end of.
+    public static func countsDrag(loading: Bool, rows: Int) -> Bool { !loading && rows > 0 }
+
     public static func next(_ following: Bool, _ event: Event) -> Bool {
         switch event {
         case .reset: true
