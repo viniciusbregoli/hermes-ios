@@ -105,6 +105,27 @@ struct ActivityTests {
         #expect(items[0].detail == "reboot" && items[1].target == .room("r2"))
     }
 
+    @Test func aMembersSessionInARoomIsTheRoomsOwnWorkingRow() {
+        var s = ActivitySnapshot()
+        s.rooms = [Room(id: "m-ops-1a2b", name: "Ops", members: [])]
+        s.live = [live("rt-1", key: "k1", status: "working", title: "Group: m-ops-1a2b"), live("rt-2", key: "k2", status: "working", title: "Group: m-gone-9")]
+
+        let named = ActivityFold.items(s)
+        #expect(named.map(\.target) == [.room("m-ops-1a2b"), nil])
+        #expect(named[0].title == "Ops" && named[1].title == "Group: m-gone-9")
+
+        // Mid-turn the titler has renamed the session; the room being busy is what ties them together.
+        s.live = [live("rt-1", key: "k1", status: "working", title: "Write 150 word story")]
+        s.roomStatus = ["m-ops-1a2b": (true, [])]
+        let renamed = ActivityFold.items(s)
+        #expect(renamed.map(\.id) == ["work-rt-1"] && renamed[0].target == .room("m-ops-1a2b") && renamed[0].title == "Ops")
+
+        // Two busy rooms: which one owns the session is a guess, so the row stays as the gateway sent it.
+        s.rooms.append(Room(id: "m-lab-3c4d", name: "Lab", members: []))
+        s.roomStatus["m-lab-3c4d"] = (true, [])
+        #expect(ActivityFold.items(s).first { $0.id == "work-rt-1" }?.target == nil)
+    }
+
     @Test func processesFoldIntoBackgroundAndExitedOnesFadeOut() {
         let now = Date(timeIntervalSince1970: 1000)
         let rows: JSON = [
