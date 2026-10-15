@@ -356,4 +356,18 @@ struct QuoteTests {
         #expect(blocks.map { plain.substring(with: $0.range) } == ["Title", "Some bold text.", "let x = 1", "- a\n- b", "End \u{1F34E}"])
         #expect(Markdown.parse("").blockRanges.isEmpty)
     }
+
+    @Test func blockPathPointsAtTheBlockAndTheListItemInIt() {
+        let node = Markdown.parse("Intro line.\n\n1. Apple: red.\n2. Banana: yellow\n   - nested\n3. Cherry: dark\n\nEnd \u{1F34E}")
+        let plain = node.plainText as NSString
+        func path(of s: String) -> [Int]? { node.blockPath(at: plain.range(of: s).location) }
+        #expect(path(of: "Intro") == [0])
+        #expect(path(of: "Apple") == [1, 0])
+        #expect(path(of: "Banana") == [1, 1])
+        #expect(path(of: "nested") == [1, 1])
+        #expect(path(of: "Cherry") == [1, 2])
+        #expect(path(of: "End") == [2])
+        #expect(node.blockPath(at: plain.length + 10) == nil)
+        #expect(Markdown.parse("").blockPath(at: 0) == nil)
+    }
 }
