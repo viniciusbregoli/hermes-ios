@@ -75,11 +75,13 @@ struct ChatView: View {
             .scrollDismissesKeyboard(.immediately)
             .modifier(UserScrolling { began in
                 guard began != dragging else { return }
+                // A finger on a blank, still-loading transcript is not a reader leaving the end: the rows arrive under it.
+                if began, !ScrollFollow.countsDrag(loading: store.loading, rows: rows.count) { return }
                 dragging = began
                 following = ScrollFollow.next(following, began ? .dragBegan : .dragEnded(atEnd: atEnd))
             })
             .overlay {
-                if store.loading { ProgressView() }
+                if store.loading { ProgressView().controlSize(.large).tint(Theme.primary).accessibilityLabel("Loading chat") }
                 else if store.items.isEmpty { EmptyChat(name: botName) }
             }
             .overlay(alignment: .bottom) {
