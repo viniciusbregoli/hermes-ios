@@ -292,6 +292,7 @@ struct BotChatsSheet: View {
                 if id == store.selectedId { Image(systemName: "checkmark").foregroundStyle(Theme.primary) }
             }
         }
+        .accessibilityAddTraits(id == store.selectedId ? .isSelected : [])
     }
 
     private func pick(_ id: String?) {

@@ -152,6 +152,11 @@ extension View {
         frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
     }
 
+    /// A toolbar action that is visibly off when it can't run: the glass toolbar doesn't dim a disabled button's label.
+    func toolbarEnabled(_ on: Bool) -> some View {
+        disabled(!on).foregroundStyle(on ? Theme.primary : Theme.muted)
+    }
+
     /// Lists and forms paint the palette instead of the system grouped background.
     func themedList() -> some View {
         self.scrollContentBackground(.hidden).background(Theme.background)
@@ -165,11 +170,12 @@ struct ProminentButton: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(Theme.onPrimary)
+            .foregroundStyle(enabled ? Theme.onPrimary : Theme.muted)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(Theme.primary, in: Capsule())
-            .opacity(!enabled ? 0.4 : configuration.isPressed ? 0.8 : 1)
+            // Dimming the filled capsule left dark text on a dark screen; a muted label on a faint fill still reads as off.
+            .background(enabled ? Theme.primary : Theme.muted.opacity(0.2), in: Capsule())
+            .opacity(configuration.isPressed ? 0.8 : 1)
             .tapTarget()
     }
 }

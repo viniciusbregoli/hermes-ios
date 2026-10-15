@@ -18,8 +18,21 @@ struct ScheduleTests {
         #expect(Schedule.describe("* * * * *") == "Every minute")
     }
 
+    @Test func describesCronsWithAMonth() {
+        #expect(Schedule.describe("0 4 1 1 *") == "At 04:00 on January 1")
+        #expect(Schedule.describe("30 18 25 dec *") == "At 18:30 on December 25")
+        #expect(Schedule.describe("0 4 1 1,7 *") == "At 04:00 on day 1 of January, July")
+        #expect(Schedule.describe("0 9 * 6-8 *") == "Every day in June, July, August at 09:00")
+        #expect(Schedule.describe("0 9 * 1 1-5") == "Weekdays in January at 09:00")
+        #expect(Schedule.describe("0 9 * mar mon") == "Mondays in March at 09:00")
+    }
+
     @Test func leavesUnusualCronRaw() {
-        #expect(Schedule.describe("0 9 * 1 *") == nil)
+        #expect(Schedule.describe("0 9 * 13 *") == nil)
+        #expect(Schedule.describe("0 9 * */2 *") == nil)
+        #expect(Schedule.describe("*/5 9 * 1 *") == nil)
+        #expect(Schedule.describe("0 9 1 1 1") == nil)
+        #expect(Schedule.describe("0 9 32 1 *") == nil)
         #expect(Schedule.describe("5,35 9 * * *") == nil)
         #expect(Schedule.describe("weekdays at 9am") == nil)
     }

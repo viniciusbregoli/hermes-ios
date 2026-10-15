@@ -28,7 +28,7 @@ struct SessionActions: ViewModifier {
         let pinned = store.pinned.contains(session.id)
         content
             .swipeActions(edge: .leading) {
-                Button { pin(!pinned) } label: { Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") }
+                Button { pin(!pinned) } label: { Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin").foregroundStyle(Theme.onPrimary) }
                     .tint(Theme.primary)
             }
             .swipeActions(edge: .trailing) {
@@ -199,7 +199,7 @@ struct ArchivedChats: View {
                 }
                 .listRowBackground(Theme.sidebar)
                 .swipeActions(edge: .leading) {
-                    Button { unarchive(s.id) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }
+                    Button { unarchive(s.id) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up").foregroundStyle(Theme.onPrimary) }
                         .tint(Theme.primary)
                 }
                 .swipeActions(edge: .trailing) {

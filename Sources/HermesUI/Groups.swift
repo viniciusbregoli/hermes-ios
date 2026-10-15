@@ -19,6 +19,7 @@ struct GroupsView: View {
                     .listRowBackground(Theme.sidebar)
                     .swipeActions {
                         Button("Disband", role: .destructive) { disbanding = room }
+                            .tint(Theme.destructive)
                     }
             }
             .overlay {
@@ -93,15 +94,21 @@ struct GroupRow: View {
     let room: Room
     let groups: GroupStore
     let bots: BotStore
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        let stacked = typeSize.isAccessibilitySize
         HStack(spacing: 12) {
             StackedAvatars(members: room.members, bots: bots, size: 28)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
-                    if groups.unread(room) { UnreadDot() }
-                    Text(room.name).font(.subheadline.weight(.medium)).lineLimit(1)
-                    Spacer()
+                // Accessibility sizes stack the name and time, so the name keeps its width.
+                let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+                layout {
+                    HStack(alignment: .firstTextBaseline) {
+                        if groups.unread(room) { UnreadDot() }
+                        Text(room.name).font(.subheadline.weight(.medium)).lineLimit(stacked ? 3 : 1)
+                    }
+                    if !stacked { Spacer() }
                     Text(room.updatedAt, format: .relative(presentation: .numeric, unitsStyle: .narrow))
                         .font(.caption2)
                         .foregroundStyle(Theme.muted)
@@ -236,9 +243,7 @@ struct CreateGroupSheet: View {
                         ProgressView()
                     } else {
                         Button("Create") { Task { await create() } }
-                            .disabled(!valid)
-                            // The glass toolbar doesn't dim a disabled button's label, so it looked tappable.
-                            .foregroundStyle(valid ? Theme.foreground : Theme.muted)
+                            .toolbarEnabled(valid)
                             .keyboardShortcut(.return, modifiers: .command)
                             .help("Create (⌘↩)")
                     }

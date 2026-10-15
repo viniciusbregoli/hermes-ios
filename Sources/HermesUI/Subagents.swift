@@ -378,7 +378,7 @@ struct DelegateSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Delegate") { confirm() }
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(!canDelegate)
+                        .toolbarEnabled(canDelegate)
                 }
             }
         }

@@ -208,7 +208,7 @@ public enum Schedule {
 
     static func cron(_ f: [String]) -> String? {
         let (minute, hour, dom, month, dow) = (f[0], f[1], f[2], f[3], f[4])
-        guard month == "*" else { return nil }
+        if month != "*" { return inMonths(month, minute: minute, hour: hour, dom: dom, dow: dow) }
         if minute == "*", hour == "*", dom == "*", dow == "*" { return "Every minute" }
         if let n = step(minute), hour == "*", dom == "*", dow == "*" { return every(n) }
         if let m = Int(minute), hour == "*", dom == "*", dow == "*" {
@@ -221,6 +221,40 @@ public enum Schedule {
         if dom == "*", let days = days(dow) { return "\(days) at \(time)" }
         if let d = Int(dom), dow == "*" { return "Monthly on day \(d) at \(time)" }
         return nil
+    }
+
+    /// A cron with a month: "At 04:00 on January 1", "Every day in June at 09:00", "Mondays in January at 09:00".
+    /// Only a fixed time of day is described; the stepped and hourly forms keep their raw text.
+    static func inMonths(_ month: String, minute: String, hour: String, dom: String, dow: String) -> String? {
+        guard let months = monthNames(month), let m = Int(minute), let h = Int(hour), m < 60, h < 24 else { return nil }
+        let time = "\(pad(h)):\(pad(m))"
+        let list = months.joined(separator: ", ")
+        if dom == "*", dow == "*" { return "Every day in \(list) at \(time)" }
+        if dom == "*", let days = days(dow) { return "\(days) in \(list) at \(time)" }
+        guard let d = Int(dom), (1...31).contains(d), dow == "*" else { return nil }
+        return months.count == 1 ? "At \(time) on \(list) \(d)" : "At \(time) on day \(d) of \(list)"
+    }
+
+    static let monthList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+    /// "1", "jan", "1,7" and "6-8" → month names, in calendar order; nil for anything else (steps, out of range).
+    static func monthNames(_ field: String) -> [String]? {
+        func month(_ s: String) -> Int? {
+            if let n = Int(s) { return (1...12).contains(n) ? n : nil }
+            return s.count >= 3 ? monthList.firstIndex { $0.lowercased().hasPrefix(s) }.map { $0 + 1 } : nil
+        }
+        var set: Set<Int> = []
+        for part in field.lowercased().split(separator: ",") {
+            let bounds = part.split(separator: "-").map(String.init)
+            guard (1...2).contains(bounds.count), let a = month(bounds[0]) else { return nil }
+            if bounds.count == 2 {
+                guard let b = month(bounds[1]), a <= b else { return nil }
+                set.formUnion(a...b)
+            } else {
+                set.insert(a)
+            }
+        }
+        return set.isEmpty ? nil : set.sorted().map { monthList[$0 - 1] }
     }
 
     /// "*/15" → 15.

@@ -217,6 +217,14 @@ enum ActivityFold {
             return (nil, row?.title.nonEmpty ?? "Chat")
         }
 
+        /// A member's turn in a room runs in a session the gateway titles "Group: <room id>" while idle, but the titler
+        /// renames it mid-turn, so a session no chat claims is also taken as the room's when exactly one room is working.
+        func room(of row: LiveSession) -> Room? {
+            if let named = s.rooms.first(where: { row.title == "Group: \($0.id)" }) { return named }
+            let working = s.rooms.filter { s.roomStatus[$0.id]?.working == true }
+            return working.count == 1 ? working[0] : nil
+        }
+
         var out: [ActivityItem] = []
         var busy: Set<ActivityItem.Target> = []
         var asking: Set<String> = []
@@ -243,7 +251,8 @@ enum ActivityFold {
         for o in [s.open] + bots.map(\.value) { if let rt = o.runtime, let at = o.startedAt { started[rt] = at } }
         // A waiting row whose question never reached us still has an agent on it, so it counts as working.
         for row in s.live where ["starting", "working", "waiting"].contains(row.status) && !asking.contains(row.id) {
-            let (target, title) = place(runtime: row.id)
+            var (target, title) = place(runtime: row.id)
+            if target == nil, let room = room(of: row) { (target, title) = (.room(room.id), room.name) }
             if let target { guard busy.insert(target).inserted else { continue } }
             out.append(ActivityItem(id: "work-\(row.id)", kind: .working(startedAt: started[row.id]),
                                     target: target, title: title, detail: oneLine(row.preview), date: row.lastActive))

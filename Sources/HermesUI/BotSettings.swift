@@ -20,6 +20,8 @@ struct BotSettingsView: View {
     @State private var confirm: (model: String, provider: String, message: String)?
     @State private var photo: PhotosPickerItem?
     @State private var uploading = false
+    @State private var discarding = false
+    @Environment(\.dismiss) private var dismiss
 
     /// Read with the settings, so a hidden bot (left out of the roster) still has its row.
     @State private var bot: Bot?
@@ -39,14 +41,25 @@ struct BotSettingsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        // Unsaved edits replace the back button (and its swipe) with one that asks first.
+        .navigationBarBackButtonHidden(dirty)
         .toolbar {
+            if dirty {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { discarding = true } label: { Label("Back", systemImage: "chevron.backward") }
+                }
+            }
             ToolbarItem(placement: .confirmationAction) {
                 Button { Task { await save() } } label: {
                     if saving { ProgressView() } else { Text("Save") }
                 }
-                .disabled(!dirty || saving)
+                .toolbarEnabled(dirty && !saving)
                 .keyboardShortcut("s", modifiers: .command)
             }
+        }
+        .confirmationDialog("Discard changes?", isPresented: $discarding, titleVisibility: .visible) {
+            Button("Discard changes", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
         }
         .alert("Bot settings", isPresented: Binding(get: { alert != nil }, set: { if !$0 { alert = nil } })) {
             Button("OK", role: .cancel) {}

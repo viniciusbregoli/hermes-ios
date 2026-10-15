@@ -55,7 +55,7 @@ struct RoutinesView: View {
         } message: {
             Text(alert ?? "")
         }
-        .task { if !store.loaded { await store.refresh() } }
+        .task { await store.refresh() }
     }
 
     private func row(_ r: Routine) -> some View {
@@ -105,20 +105,25 @@ struct RunTimes: View {
     let routine: Routine
 
     var body: some View {
-        HStack(spacing: 10) {
-            if routine.completed {
-                Text("Completed")
-            } else if !routine.enabled {
-                Text("Paused")
-            } else if let next = routine.nextRun {
-                Text("Next \(next, format: .relative(presentation: .numeric))")
+        // A formatted date is rendered once; the clock makes "1 second ago" move on its own.
+        TimelineView(.periodic(from: .now, by: 15)) { _ in
+            HStack(spacing: 10) {
+                if routine.completed {
+                    Text("Completed")
+                } else if !routine.enabled {
+                    Text("Paused")
+                } else if let next = routine.nextRun {
+                    Text("Next \(next, format: .relative(presentation: .numeric))")
+                }
+                if let last = routine.lastRun {
+                    // The server's clock can run a little ahead of the phone's, which would read "in 0 seconds".
+                    Text("Last run \(min(last, Date().addingTimeInterval(-1)), format: .relative(presentation: .numeric))")
+                }
             }
-            if let last = routine.lastRun {
-                Text("Last run \(last, format: .relative(presentation: .numeric))")
-            }
+            .font(.caption2)
+            .foregroundStyle(Theme.muted)
+            .accessibilityElement(children: .combine)
         }
-        .font(.caption2)
-        .foregroundStyle(Theme.muted)
     }
 }
 
@@ -226,6 +231,8 @@ struct RoutineDetail: View {
             Text(alert ?? "")
         }
         .task { targets = (try? await store.deliveryTargets()) ?? [] }
+        // Coming back from a run's transcript or the editor: the list row may be older than the server's.
+        .task { await store.refresh() }
         // A run, an edit or a pause anywhere (cron.changed) moves these; refetch the full job and its runs.
         .task(id: listed) { await load() }
     }
@@ -370,7 +377,7 @@ struct RoutineEditor: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(editing == nil ? "Create" : "Save") { Task { await save() } }
-                        .disabled(!canSave)
+                        .toolbarEnabled(canSave)
                         .keyboardShortcut("s", modifiers: .command)
                 }
             }

@@ -11,6 +11,12 @@ targets:
     type: application
     platform: iOS
     sources: [App]
+    # The generated Info.plist has no key for a launch screen background, so it comes from this file, merged into it.
+    info:
+      path: App/Info.plist
+      properties:
+        UILaunchScreen:
+          UIColorName: LaunchBackground
     dependencies:
       - package: HermesKit
         product: HermesUI
@@ -25,7 +31,6 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: Hermes
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_NSCameraUsageDescription: "Take a photo to send to Hermes."
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Save images from Hermes to your photo library."
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
