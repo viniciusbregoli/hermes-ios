@@ -435,6 +435,7 @@ struct SettingsView: View {
                 .listRowBackground(Theme.sidebar)
                 SubagentSettingsSection(gateway: gateway)
                 ReadAloudSettingsSection()
+                ApprovalsSettingsSection(gateway: gateway)
                 Section {
                     NavigationLink { RoutinesView(gateway: gateway, profile: nil) } label: {
                         Label("Routines", systemImage: "clock.arrow.circlepath")
