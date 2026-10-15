@@ -109,7 +109,7 @@ struct QueueSheet: View {
         }
         .swipeActions(edge: .leading) {
             if canSteer(m) {
-                Button { steer(m, redirect: false) } label: { Label("Steer", systemImage: "arrow.turn.left.up") }
+                Button { steer(m, redirect: false) } label: { Label("Steer", systemImage: "arrow.turn.left.up").foregroundStyle(Theme.onPrimary) }
                     .tint(Theme.primary)
             }
         }
