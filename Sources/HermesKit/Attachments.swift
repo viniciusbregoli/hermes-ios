@@ -24,6 +24,16 @@ public struct Attachment: Identifiable, Hashable, Sendable {
         self.data = data
     }
 
+    /// An image from the pasteboard. A PNG with an alpha channel stays a PNG so transparency
+    /// survives; everything else gets the JPEG the photo picker produces.
+    public static func pasted(_ data: Data, index: Int) async -> Attachment? {
+        if ImageFile.hasAlpha(data), let png = await ImageFile.png(data) {
+            return Attachment(name: "pasted-\(index).png", mime: "image/png", data: png)
+        }
+        guard let jpeg = await ImageFile.jpeg(data) else { return nil }
+        return Attachment(name: "pasted-\(index).jpg", mime: "image/jpeg", data: jpeg)
+    }
+
     public var isImage: Bool { mime.hasPrefix("image/") }
 
     /// Matches the server's 25 MB `image.attach_bytes` cap; also keeps file uploads to one sane frame.
@@ -117,6 +127,13 @@ extension ChatStore {
     public func attach(_ a: Attachment) {
         attachments.append(a)
         Task { await upload(a.id) }
+    }
+
+    /// Stages every image pasted at once, one chip each.
+    public func attachPasted(_ images: [Data]) async {
+        for (i, data) in images.enumerated() {
+            if let a = await Attachment.pasted(data, index: i + 1) { attach(a) } else { alert = "Couldn't read the pasted image." }
+        }
     }
 
     public func retryAttachment(_ id: UUID) {
