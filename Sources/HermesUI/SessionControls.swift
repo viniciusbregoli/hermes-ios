@@ -335,6 +335,7 @@ struct ContextSheet: View {
                 if let usage {
                     Section("This session") {
                         Row("Input", Self.compact(usage.input))
+                        if usage.cached > 0 { Row("Cached input", Self.compact(usage.cached)) }
                         Row("Output", Self.compact(usage.output))
                         Row("Total", Self.compact(usage.total))
                         if let cost = usage.costUSD { Row("Cost", cost.formatted(.currency(code: "USD"))) }

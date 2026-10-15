@@ -49,6 +49,8 @@ public struct Usage: Hashable, Sendable {
     public var contextPercent: Int?
     public var estimated = false
     public var input = 0, output = 0, total = 0, compressions = 0
+    /// Input plus what came from the prompt cache; the server counts the cached part in `total` only.
+    public var prompt = 0
     public var costUSD: Double?
 
     public init?(_ json: JSON?) {
@@ -60,9 +62,13 @@ public struct Usage: Hashable, Sendable {
         input = o["input"]?.int ?? 0
         output = o["output"]?.int ?? 0
         total = o["total"]?.int ?? 0
+        prompt = o["prompt"]?.int ?? 0
         compressions = o["compressions"]?.int ?? 0
         costUSD = o["cost_usd"]?.double
     }
+
+    /// Prompt tokens served from or written to the cache, which `input` leaves out.
+    public var cached: Int { max(0, prompt - input) }
 
     /// Context fill from 0 to 1, or nil before the model's window is known.
     public var fraction: Double? {
