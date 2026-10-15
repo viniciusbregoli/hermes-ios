@@ -41,7 +41,8 @@ public enum Artifacts {
     /// Newest first; a file seen in several chats (a branch copies its history) is listed once, under the newest.
     public static func merge(_ lists: [[Artifact]]) -> [Artifact] {
         var seen = Set<String>()
-        return lists.joined().sorted { $0.date > $1.date }.filter { seen.insert($0.value).inserted }
+        // The on-disk index can still hold placeholders scanned before they were refused.
+        return lists.joined().sorted { $0.date > $1.date }.filter { !isPlaceholder($0.value) && seen.insert($0.value).inserted }
     }
 
     // MARK: - Candidates
@@ -109,11 +110,17 @@ public enum Artifacts {
         let web = v.hasPrefix("http://") || v.hasPrefix("https://")
         guard web || v.hasPrefix("/") || v.hasPrefix("~/") else { return false }
         // pip's own downloads and cache, not session output (desktop #52972).
+        if isPlaceholder(v) { return false }
         if v.contains("/.cache/pip/") || v.contains("/packages/") && web { return false }
         if explicit && !web { return true }
         let path = web ? (URL(string: v)?.path ?? "") : v
         guard let dot = path.lastIndex(of: "."), !path[dot...].contains("/") else { return false }
         return knownExts.contains(path[path.index(after: dot)...].lowercased())
+    }
+
+    /// The example paths the system prompt and skills use when they explain `MEDIA:` ("/absolute/path.png"); no file is there.
+    static func isPlaceholder(_ v: String) -> Bool {
+        v.range(of: #"^/(?:absolute|full/path|path/to|your/path)(?:/|$)"#, options: .regularExpression) != nil
     }
 
     static let knownExts = Set(Media.deliveryExts + ["heic"])
