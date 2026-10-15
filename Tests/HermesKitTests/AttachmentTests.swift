@@ -1,5 +1,7 @@
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 @testable import HermesKit
 
 struct AttachmentTests {
@@ -68,5 +70,51 @@ struct QueuedAttachmentTests {
         gateway.dispatch(GatewayEvent(type: "message.start", sessionId: "rt1", payload: nil))
         #expect(store.items.last?.images == [.path("/srv/q.png")])
         #expect(store.queued.map(\.id) == ["q2"])
+    }
+}
+
+@MainActor
+struct PastedImageTests {
+    /// A flat-colour PNG; `alpha` makes the left half transparent.
+    static func png(width: Int = 64, height: Int = 32, alpha: Bool) -> Data {
+        let info = alpha ? CGImageAlphaInfo.premultipliedLast : CGImageAlphaInfo.noneSkipLast
+        let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info.rawValue)!
+        ctx.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        ctx.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
+        let out = NSMutableData()
+        let dest = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(dest, ctx.makeImage()!, nil)
+        CGImageDestinationFinalize(dest)
+        return out as Data
+    }
+
+    @Test func transparentPNGStaysPNG() async throws {
+        let a = try #require(await Attachment.pasted(Self.png(alpha: true), index: 2))
+        #expect(a.name == "pasted-2.png" && a.mime == "image/png" && a.isImage)
+        #expect(ImageFile.hasAlpha(a.data))
+    }
+
+    @Test func opaqueImageBecomesJPEG() async throws {
+        let a = try #require(await Attachment.pasted(Self.png(alpha: false), index: 1))
+        #expect(a.name == "pasted-1.jpg" && a.mime == "image/jpeg")
+        #expect(a.data.prefix(2) == Data([0xFF, 0xD8]))
+    }
+
+    @Test func bigImagesAreCappedAt2048() async throws {
+        let a = try #require(await Attachment.pasted(Self.png(width: 4096, height: 1024, alpha: true), index: 1))
+        let image = try #require(ImageFile.cgImage(a.data, maxPixel: 10_000))
+        #expect(max(image.width, image.height) == 2048)
+    }
+
+    @Test func nonImageDataIsRejected() async {
+        #expect(await Attachment.pasted(Data("hello".utf8), index: 1) == nil)
+    }
+
+    @Test func pastingSeveralImagesStagesOneChipEach() async {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        await store.attachPasted([Self.png(alpha: true), Self.png(alpha: false), Data([1])])
+        #expect(store.attachments.map(\.name) == ["pasted-1.png", "pasted-2.jpg"])
+        #expect(store.alert != nil)
     }
 }
