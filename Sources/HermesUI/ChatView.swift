@@ -487,10 +487,15 @@ struct ItemView: View {
         case .user:
             VStack(alignment: .trailing, spacing: 6) {
                 if !item.images.isEmpty || !item.files.isEmpty { MessageAttachments(item: item) }
-                if !item.text.isEmpty {
+                if !item.text.isEmpty || !item.quotes.isEmpty {
                     HStack {
                         Spacer(minLength: 40)
-                        Text(item.text)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(item.quotes.enumerated()), id: \.offset) { _, quote in
+                                Label(quote.preview, systemImage: "text.quote").font(.footnote).foregroundStyle(Theme.muted).lineLimit(2)
+                            }
+                            if !item.text.isEmpty { Text(item.text) }
+                        }
                             // Without this the bubble next to an image kept one line until the next layout pass.
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 12)

@@ -90,8 +90,11 @@ private struct SelectableText: UIViewRepresentable {
 
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
-        let styled = Self.attributed(text, typeSize: typeSize)
-        if view.attributedText != styled { view.attributedText = styled }
+        // Setting the text again drops the selection, and every selection change re-runs this.
+        let key = "\(typeSize)|\(Theme.palette.id)|\(text)"
+        guard context.coordinator.shown != key else { return }
+        context.coordinator.shown = key
+        view.attributedText = Self.attributed(text, typeSize: typeSize)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -139,6 +142,7 @@ private struct SelectableText: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: SelectableText
+        var shown = ""
         init(_ parent: SelectableText) { self.parent = parent }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
