@@ -31,6 +31,11 @@ struct ChatView: View {
     @State private var speaker = Speaker()
     /// The reply open in the select-text sheet.
     @State private var quoting: ChatItem?
+    /// A jump from a sent quote to its reply: the block it marks, a note about it, and the running jump.
+    @State private var quoteTarget: QuoteTarget?
+    @State private var quoteNotice: String?
+    @State private var lostQuote: Quote?
+    @State private var jumping: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
     /// Landscape on a phone: the controls row hides behind a button so the transcript keeps some height above the keyboard.
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -76,8 +81,10 @@ struct ChatView: View {
                 else if !end, following, !dragging, !disclosing { toEnd(proxy) }
             })
             .scrollDismissesKeyboard(.interactively)
+            .environment(\.openQuote) { quote, id in jump(to: quote, from: id, proxy: proxy) }
             .modifier(UserScrolling { began in
                 guard began != dragging else { return }
+                if began { jumping?.cancel() }
                 // A finger on a blank, still-loading transcript is not a reader leaving the end: the rows arrive under it.
                 if began, !ScrollFollow.countsDrag(loading: store.loading, rows: rows.count) { return }
                 dragging = began
@@ -89,6 +96,7 @@ struct ChatView: View {
             }
             .overlay(alignment: .bottom) {
                 VStack(spacing: 0) {
+                    QuoteNotice(text: $quoteNotice)
                     SteerToast(store: store)
                     HStack(alignment: .bottom, spacing: 8) {
                         WorkingControls(running: store.running, startedAt: store.turnStartedAt,
@@ -104,6 +112,7 @@ struct ChatView: View {
                     }
                 }
                 .animation(.easeOut(duration: 0.18), value: store.steerFeedback)
+                .animation(.easeOut(duration: 0.18), value: quoteNotice)
             }
             .overlay(alignment: .top) { SpeechBar(speaker: speaker) }
             .animation(.easeOut(duration: 0.2), value: speaker.state)
@@ -251,6 +260,7 @@ struct ChatView: View {
         }
         .sensoryFeedback(.success, trigger: store.finishedTurns) { _, _ in store.visible }
         .sensoryFeedback(.selection, trigger: store.pendingQuotes.count)
+        .sheet(item: $lostQuote) { LostQuote(quote: $0).chatTextSize() }
         #if os(iOS)
         .sheet(item: $quoting) { item in
             QuoteSheet(text: item.text, store: store).chatTextSize()
@@ -266,7 +276,8 @@ struct ChatView: View {
     @ViewBuilder private func row(_ row: TimelineRow) -> some View {
         switch row {
         case .item(let item):
-            ItemView(item: item, bots: bots, actions: actions(for: item))
+            ItemView(item: item, bots: bots, actions: actions(for: item),
+                     quoteBlock: quoteTarget?.itemId == item.id ? quoteTarget?.path : nil)
             ItemFooter(store: store, item: item)
         case .work(let group):
             ActivityGroupView(group: group, open: Binding(
@@ -384,6 +395,40 @@ struct ChatView: View {
         }
     }
 
+    /// Scrolls to the reply a sent quote came from and marks the quoted block for a moment. The reply may be folded
+    /// into its turn, so the turn opens first. A lazy list only estimates where rows far from the screen are, so the
+    /// first scroll lands near the reply and, once its rows exist, a second one lands on the block.
+    private func jump(to quote: Quote, from id: String, proxy: ScrollViewProxy) {
+        jumping?.cancel()
+        quoteTarget = nil
+        guard let source = Quote.source(of: quote, before: id, in: store.items),
+              let at = store.items.firstIndex(where: { $0.id == source.itemId }) else {
+            lostQuote = quote
+            return
+        }
+        quoteNotice = source.exact ? nil : "That reply changed since you quoted it. Showing where it was."
+        let target = QuoteTarget(itemId: source.itemId, path: MarkdownView.parse(store.items[at].text).blockPath(at: source.range.location) ?? [])
+        let folded = !Timeline.rows(store.items, running: store.running, status: store.statusText, ends: store.turnEnds, expanded: openTurns)
+            .contains { $0.id == source.itemId }
+        if folded, let turn = store.items[..<at].last(where: \.startsTurn) { openTurns.insert(turn.id) }
+        // Leaving the end must not be undone by the follower, which scrolls back whenever the end is out of view.
+        following = false
+        jumping = Task { @MainActor in
+            defer { quoteTarget = nil }
+            func pause(_ ms: Int) async -> Bool {
+                try? await Task.sleep(for: .milliseconds(ms))
+                return !Task.isCancelled
+            }
+            guard await pause(folded ? 350 : 0) else { return }
+            proxy.scrollTo(source.itemId, anchor: .top)
+            guard await pause(450) else { return }
+            quoteTarget = target
+            guard await pause(150) else { return }
+            proxy.scrollTo(BlockView.highlightId, anchor: UnitPoint(x: 0.5, y: 0.3))
+            _ = await pause(2_500)
+        }
+    }
+
     /// Runs a user toggle, then decides following once the layout has settled (T3's disclosure-settled).
     private func disclose(_ toggle: () -> Void) {
         disclosing = true
@@ -492,6 +537,8 @@ struct ItemView: View {
     var bots: BotStore?
     /// Edit, retry and branch, after Copy in the long-press menu.
     var actions: [MessageAction] = []
+    /// The block of this reply a quote jump is marking.
+    var quoteBlock: [Int]?
 
     var body: some View {
         switch item.kind {
@@ -501,9 +548,9 @@ struct ItemView: View {
                 if !item.text.isEmpty || !item.quotes.isEmpty {
                     HStack {
                         Spacer(minLength: 40)
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 6) {
                             ForEach(Array(item.quotes.enumerated()), id: \.offset) { _, quote in
-                                Label(quote.preview, systemImage: "text.quote").font(.footnote).foregroundStyle(Theme.muted).lineLimit(2)
+                                SentQuote(quote: quote, messageId: item.id)
                             }
                             if !item.text.isEmpty { Text(item.text) }
                         }
@@ -527,7 +574,7 @@ struct ItemView: View {
         case .assistant:
             // Reasoning is drawn by the timeline's work groups.
             if !item.text.isEmpty {
-                MarkdownView(text: item.text, streaming: item.streaming)
+                MarkdownView(text: item.text, streaming: item.streaming, highlight: quoteBlock)
                     .contextMenu {
                         Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(MarkdownView.plainText(item.text)) }
                         Button("Copy Markdown", systemImage: "text.document") { Clipboard.copy(item.text) }

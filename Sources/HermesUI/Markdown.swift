@@ -28,9 +28,11 @@ struct OpenMedia {
 struct MarkdownView: View {
     let text: String
     var streaming = false
+    /// A block to mark (see `BlockView.highlight`).
+    var highlight: [Int]?
 
     var body: some View {
-        BlockView(node: Self.parse(streaming ? Markdown.stableStreamingText(text) : text))
+        BlockView(node: Self.parse(streaming ? Markdown.stableStreamingText(text) : text), highlight: highlight)
             .foregroundStyle(Theme.foreground)
             // Opaque, so the long-press preview doesn't show the transcript through the text.
             .background(Theme.background)
@@ -53,8 +55,21 @@ struct MarkdownView: View {
 
 struct BlockView: View {
     let node: MarkdownNode
+    /// Marks one block: the path from this node to it, as in `MarkdownNode.blockPath`. An empty path marks this node.
+    var highlight: [Int]?
+
+    /// The scroll target of the marked block, so a jump can land on it and not only on its reply.
+    static let highlightId = "quote-target"
 
     var body: some View {
+        content.background {
+            if highlight?.isEmpty == true {
+                RoundedRectangle(cornerRadius: 6).fill(Theme.primary.opacity(0.22)).padding(-4).id(Self.highlightId)
+            }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         switch node.kind {
         case .document:
             children(spacing: 10)
@@ -97,7 +112,9 @@ struct BlockView: View {
 
     private func children(spacing: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: spacing) {
-            ForEach(Array(node.children.enumerated()), id: \.offset) { BlockView(node: $1) }
+            ForEach(Array(node.children.enumerated()), id: \.offset) { i, child in
+                BlockView(node: child, highlight: highlight?.first == i ? Array(highlight!.dropFirst()) : nil)
+            }
         }
     }
 
