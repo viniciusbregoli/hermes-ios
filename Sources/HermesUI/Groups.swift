@@ -303,6 +303,7 @@ struct RoomView: View {
     /// Bumped to scroll to the end (see EndScroller).
     @State private var endRequests = 0
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.dismiss) private var dismiss
 
     private static let end = "room-end"
@@ -476,7 +477,9 @@ struct RoomView: View {
                     }
                 }
             }
-            Composer(draft: $draft, focused: $composerFocused, placeholder: "Message \(store.room.name)",
+            // At accessibility sizes the Send button leaves the field room for the first word only.
+            Composer(draft: $draft, focused: $composerFocused,
+                     placeholder: typeSize.isAccessibilitySize ? "Message" : "Message \(store.room.name)",
                      running: store.working, enabled: store.gateway.status == .online && !store.sending && !store.gone) {
                 let text = draft
                 draft = ""
