@@ -1,6 +1,6 @@
 # QA pass summary (2026-10-14)
 
-Five batches covered 70 user stories in the iOS simulator, plus app-wide audits with the dogfood, ux-audit, break-ui and impeccable skills. Per-story results are in `results/`. The fix plan with finding ids is in `FIXES.md`.
+Five batches made 68 story runs (BO-04 ran in batches 3 and 5) in the iOS simulator, plus app-wide audits with the dogfood, ux-audit, break-ui and impeccable skills. Per-story results are in `results/`. The fix plan with finding ids is in `FIXES.md`.
 
 | Batch | Stories | Pass | Partial | Fail | Blocked |
 |---|---|---|---|---|---|
