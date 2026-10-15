@@ -42,6 +42,8 @@ public struct ChatItem: Identifiable, Hashable, Sendable {
     /// Attachments on a user message.
     public var images: [ImageSource] = []
     public var files: [String] = []
+    /// Passages from earlier replies that a user message quotes.
+    public var quotes: [Quote] = []
     /// When the item was written (transcript timestamp) or arrived live; times turns.
     public var date: Date?
     public var slash: SlashNote?
@@ -334,15 +336,17 @@ public final class ChatStore {
 
     /// `note` is appended to what the agent receives but not shown (the @mention note);
     /// `display` replaces the text in the bubble (a skill command's invocation instead of its body).
+    /// `quotes` go to the agent ahead of `text` and come back as `ChatItem.quotes` when the chat reloads.
     /// While a turn runs, a text-only message is queued on this device instead (Queue.swift).
-    public func send(_ text: String, note: String = "", display: String? = nil) async {
+    public func send(_ text: String, quotes: [Quote] = [], note: String = "", display: String? = nil) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !attachments.isEmpty, !attachmentsPending else { return }
+        let quotes = Array(quotes.compactMap(\.normalized).prefix(Quote.maxCount))
+        guard !text.isEmpty || !quotes.isEmpty || !attachments.isEmpty, !attachmentsPending else { return }
         if running, attachments.isEmpty {
-            queue.append(QueuedMessage(id: localId(), text: text, note: note, display: display))
+            queue.append(QueuedMessage(id: localId(), text: text, note: note, quotes: quotes, display: display))
             return
         }
-        await submit(text, note: note, display: display, queued: running)
+        await submit(text, note: note, display: display, queued: running, quotes: quotes)
     }
 
     /// - Parameters:
@@ -351,13 +355,13 @@ public final class ChatStore {
     ///     whatever the composer holds now was staged for a later message and stays out of this one.
     /// - Returns: false when the message didn't reach the server.
     @discardableResult
-    func submit(_ text: String, note: String, display: String?, queued: Bool, ownAttachments: Bool = true) async -> Bool {
+    func submit(_ text: String, note: String, display: String?, queued: Bool, ownAttachments: Bool = true, quotes: [Quote] = []) async -> Bool {
         var sent: [Attachment] = []
         do {
             let sid = try await ensureSession()
             if ownAttachments { sent = try await takeAttachments(for: sid) } else { await unstageImages(on: sid) }
             let bubble = ChatItem(id: localId(), kind: .user, text: display ?? text, images: sent.filter(\.isImage).map { .data($0.data) },
-                                  files: sent.filter { !$0.isImage }.map(\.name), date: Date())
+                                  files: sent.filter { !$0.isImage }.map(\.name), quotes: quotes, date: Date())
             // A busy session decides where the message goes (queue, steer, redirect), so wait for its answer.
             let busy = running
             if !busy {
@@ -366,7 +370,7 @@ public final class ChatStore {
             }
             running = true
             retryText = nil
-            var params: [String: JSON] = ["session_id": .string(sid), "text": .string(Attachment.promptText(text, sent) + note)]
+            var params: [String: JSON] = ["session_id": .string(sid), "text": .string(Attachment.promptText(Quote.compose(quotes, with: text), sent) + note)]
             if queued { params["queued"] = true }
             let r = try await gateway.call("prompt.submit", params)
             let status = r["status"]?.string
@@ -719,7 +723,8 @@ public final class ChatStore {
                 return ChatItem(id: "row-\(rowId)", kind: .agent, text: agent.body, agent: agent)
             }
             // The @mention note is for the agent; the user only typed what precedes it.
-            let shown = text.range(of: BotStore.mentionNoteStart).map { String(text[..<$0.lowerBound]) } ?? text
+            // The note is the last thing appended, so a quote that happens to contain its words stays whole.
+            let shown = text.range(of: BotStore.mentionNoteStart, options: .backwards).map { String(text[..<$0.lowerBound]) } ?? text
             return userItem(id: "row-\(rowId)", shown)
         case "assistant":
             let reasoning = m["reasoning"]?.string ?? ""

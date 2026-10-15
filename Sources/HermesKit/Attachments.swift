@@ -118,9 +118,10 @@ extension ChatStore {
     /// A user bubble from transcript text, with its attachment refs pulled out as thumbnails and chips.
     func userItem(id: String, _ text: String) -> ChatItem {
         if let note = Harness.note(text: text) { return ChatItem(id: id, kind: .system, text: note.title, system: note) }
-        let c = UserContent.parse(DelegateTier.displayed(text) ?? text)
+        let (quotes, rest) = Quote.extract(from: text)
+        let c = UserContent.parse(DelegateTier.displayed(rest) ?? rest)
         return ChatItem(id: id, kind: .user, text: c.text, images: c.images.map { .path($0) },
-                        files: c.files.map { ($0 as NSString).lastPathComponent })
+                        files: c.files.map { ($0 as NSString).lastPathComponent }, quotes: quotes)
     }
 
     /// Adds a picked item and stages it right away, so the send itself stays fast.

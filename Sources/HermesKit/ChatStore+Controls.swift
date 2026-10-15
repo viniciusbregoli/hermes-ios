@@ -230,7 +230,7 @@ extension ChatStore {
         if let user = f["user"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
             let shown = userItem(id: localId(), user)
             let last = items.last { shown.kind == .system ? $0.startsTurn : $0.kind == .user }
-            if last?.kind != shown.kind || last?.text.trimmingCharacters(in: .whitespacesAndNewlines) != shown.text.trimmingCharacters(in: .whitespacesAndNewlines) {
+            if last?.kind != shown.kind || last?.quotes != shown.quotes || last?.text.trimmingCharacters(in: .whitespacesAndNewlines) != shown.text.trimmingCharacters(in: .whitespacesAndNewlines) {
                 items.append(shown)
             }
         }
