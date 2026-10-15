@@ -27,8 +27,9 @@ struct ControlsRow: View {
             ApprovalsMenu(store: store)
         }
         .font(.caption)
-        // The pills share one line; above the default size they truncate to "...".
-        .dynamicTypeSize(...DynamicTypeSize.large)
+        // The pills share one line: above the default size they truncate to "...", so they keep it whatever
+        // the chat text size is, including below 100%.
+        .dynamicTypeSize(.large)
         .padding(.horizontal, 10)
         .padding(.top, 6)
         .disabled(store.gateway.status != .online)
