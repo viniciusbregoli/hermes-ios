@@ -222,7 +222,7 @@ struct CreateGroupSheet: View {
                 } header: {
                     Text("Bots")
                 } footer: {
-                    Text("\(picked.count) of 2 to 6 picked. With no @mention, every bot hears and may answer.")
+                    Text("With no @mention, every bot hears and may answer.")
                 }
                 .listRowBackground(Theme.sidebar)
                 if let error {
@@ -235,6 +235,16 @@ struct CreateGroupSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    // Beside Create, so the 2 to 6 rule stays in view however far the bot list is scrolled.
+                    VStack(spacing: 0) {
+                        Text("New group").font(.headline)
+                        Text("\(picked.count) \(picked.count == 1 ? "bot" : "bots") picked (2 to 6)")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.muted)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 }
