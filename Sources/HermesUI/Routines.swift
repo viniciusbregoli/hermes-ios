@@ -370,7 +370,7 @@ struct RoutineEditor: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(editing == nil ? "Create" : "Save") { Task { await save() } }
-                        .disabled(!canSave)
+                        .toolbarEnabled(canSave)
                         .keyboardShortcut("s", modifiers: .command)
                 }
             }

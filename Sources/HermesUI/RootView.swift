@@ -402,6 +402,7 @@ struct SettingsView: View {
                                 if p.id == themeId { Image(systemName: "checkmark").foregroundStyle(Theme.primary) }
                             }
                         }
+                        .accessibilityAddTraits(p.id == themeId ? .isSelected : [])
                     }
                     // A dark-only palette ignores the choice, so show what it renders instead of the stored preference.
                     let darkOnly = Palette.named(themeId).light == nil

@@ -61,6 +61,8 @@ struct GoalCard: View {
                     Text(text).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(.footnote)
+                .accessibilityElement(children: .combine)
+                .accessibilityValue(goal.status == .done ? "Done" : "Not done")
                 .contextMenu {
                     Button("Remove subgoal", systemImage: "trash", role: .destructive) { act("subgoal.remove", index: i + 1) }
                 }
