@@ -47,6 +47,21 @@ public extension MarkdownNode {
             return (child.kind, NSRange(location: at, length: child.plainText.utf16.count))
         }
     }
+
+    /// The block that holds `offset` of `plainText`: its index among the top-level blocks, then, inside a list, the
+    /// index of the item. A long list would otherwise be one block, too big to point at. nil when no block holds it.
+    func blockPath(at offset: Int) -> [Int]? {
+        let blocks = blockRanges
+        guard let top = blocks.firstIndex(where: { offset >= $0.range.location && offset <= $0.range.location + $0.range.length }) else { return nil }
+        guard case .list = blocks[top].kind else { return [top] }
+        var at = blocks[top].range.location
+        for (i, item) in children[top].children.enumerated() {
+            let end = at + item.plainText.utf16.count
+            if offset <= end { return [top, i] }
+            at = end + 1
+        }
+        return [top]
+    }
 }
 
 public enum Markdown {

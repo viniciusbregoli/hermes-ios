@@ -114,6 +114,112 @@ struct QuoteEditor: View {
     }
 }
 
+// MARK: - Sent quotes
+
+extension EnvironmentValues {
+    /// Jumps from a quote chip to the reply it came from, given the id of the message that carries the chip.
+    /// Unset where the transcript cannot scroll, which leaves the chips plain.
+    @Entry var openQuote: ((Quote, String) -> Void)?
+}
+
+/// The reply block a jump marks, by the reply's id and the block's path in it.
+struct QuoteTarget: Equatable {
+    let itemId: String
+    let path: [Int]
+}
+
+/// A quote inside a sent message: its first words, its comment when it has one, and a tap that goes to the source.
+struct SentQuote: View {
+    let quote: Quote
+    let messageId: String
+    @Environment(\.openQuote) private var open
+
+    var body: some View {
+        let label = HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "text.quote").foregroundStyle(Theme.primary).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(quote.preview).foregroundStyle(Theme.muted).lineLimit(2)
+                if !quote.comment.isEmpty { Text(quote.comment).lineLimit(4) }
+            }
+            .font(.footnote)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(minHeight: 44)
+        .background(Theme.background.opacity(0.4), in: RoundedRectangle(cornerRadius: Theme.radius))
+        if let open {
+            Button { open(quote, messageId) } label: { label }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Quote: \(quote.preview)")
+                .accessibilityValue(quote.comment)
+                .accessibilityHint("Go to the quoted reply")
+        } else {
+            label
+        }
+    }
+}
+
+/// A short word over the composer about a jump, such as the reply having changed.
+struct QuoteNotice: View {
+    @Binding var text: String?
+
+    var body: some View {
+        if let message = text {
+            Label(message, systemImage: "text.quote")
+                .font(.footnote)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.sidebar, in: Capsule())
+                .overlay(Capsule().stroke(Theme.border))
+                .padding(.horizontal, 14)
+                .padding(.bottom, 6)
+                .onTapGesture { text = nil }
+                .task(id: message) {
+                    try? await Task.sleep(for: .seconds(4))
+                    if text == message { text = nil }
+                }
+                .transition(.opacity)
+        }
+    }
+}
+
+/// A quote whose reply is no longer in the chat: it stays readable here.
+struct LostQuote: View {
+    let quote: Quote
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Label("The reply this was quoted from is no longer in this chat.", systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.muted)
+                    Text(quote.text)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .leading) { Rectangle().fill(Theme.primary).frame(width: 3) }
+                        .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
+                        .textSelection(.enabled)
+                    if !quote.comment.isEmpty {
+                        Text("Your comment").font(.footnote).foregroundStyle(Theme.muted)
+                        Text(quote.comment).textSelection(.enabled)
+                    }
+                }
+                .padding(16)
+            }
+            .background(Theme.background)
+            .navigationTitle("Quote")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 // MARK: - Selecting
 
 #if os(iOS)
