@@ -112,11 +112,11 @@ struct QuoteTests {
     }
 
     @Test func aLaterBrokenBlockKeepsTheEarlierQuotes() {
-        let good = Quote.compose([Quote(text: "one"), Quote(text: "two")], with: "")
-        let raw = String(good.dropLast(2)) + "\n\nand text"
+        let good = Quote.compose([Quote(text: "one"), Quote(text: "two\nmore")], with: "")
+        let raw = String(good.dropLast("\n> more".count)) + "\n\nand text"
         let out = Quote.extract(from: raw)
         #expect(out.quotes.map(\.text) == ["one"])
-        #expect(out.rest.contains("> tw") && out.rest.contains("and text"))
+        #expect(out.rest.contains("> two") && out.rest.contains("and text"))
     }
 
     @Test func aMarkerTypedAfterTheQuotesIsPlainText() {
@@ -369,5 +369,19 @@ struct QuoteTests {
         #expect(path(of: "End") == [2])
         #expect(node.blockPath(at: plain.length + 10) == nil)
         #expect(Markdown.parse("").blockPath(at: 0) == nil)
+    }
+
+    @Test func aQuoteWithoutACommentHasNoCommentLine() {
+        let block = Quote.compose([Quote(text: "Pacific")], with: "")
+        #expect(block.hasSuffix("> Pacific") && !block.contains("Comment on the quote"))
+        // The stored text is trimmed at its end, so it must parse the same after that.
+        #expect(Quote.extract(from: block.trimmingCharacters(in: .whitespacesAndNewlines)).quotes == [Quote(text: "Pacific")])
+    }
+
+    @Test func aStoredEmptyCommentLineStillParses() {
+        // What older builds sent for a quote with no comment, after the server trimmed the trailing space.
+        let raw = "<!-- hq1 {\"c\":1,\"pre\":\"\",\"q\":1,\"suf\":\"\"} -->\nQuoting your earlier reply:\n> Pacific\nComment on the quote:"
+        let out = Quote.extract(from: raw)
+        #expect(out.quotes == [Quote(text: "Pacific")] && out.rest.isEmpty)
     }
 }
