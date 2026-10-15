@@ -109,7 +109,8 @@ extension Quote {
     /// `normalized` must hold; `compose` is the entry point.
     private var block: String {
         let quoted = text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }
-        let note = comment.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        // No comment means no comment line: a trailing empty one is trimmed when the message is stored, which broke the block.
+        let note = comment.isEmpty ? [] : comment.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = (try? encoder.encode(Marker(pre: prefix, suf: suffix, q: quoted.count, c: note.count))) ?? Data("{}".utf8)
@@ -164,8 +165,9 @@ extension Quote {
         var note: [String] = []
         if m.c > 0 {
             let comment = lines[(i + 2 + m.q)..<(i + 2 + m.q + m.c)]
-            guard comment.first?.hasPrefix(commentLead) == true else { return nil }
-            note = [String(comment.first!.dropFirst(commentLead.count))] + comment.dropFirst().map(String.init)
+            // Messages stored before the comment line was dropped for empty comments lost its trailing space.
+            guard let first = comment.first, first.hasPrefix(commentLead) || first == commentLead.trimmingCharacters(in: .whitespaces) else { return nil }
+            note = [String(first.dropFirst(commentLead.count))] + comment.dropFirst().map(String.init)
         }
         return (Quote(text: quoted.joined(separator: "\n"), comment: note.joined(separator: "\n"), prefix: m.pre, suffix: m.suf), i + 2 + m.q + m.c)
     }
