@@ -64,6 +64,8 @@ struct ChatView: View {
                 .padding(.vertical, 12)
             }
             .modifier(BottomAnchored())
+            // The floating Working capsule and queue chip would otherwise sit over the last row.
+            .contentMargins(.bottom, store.running || store.queuedCount > 0 ? 52 : 0, for: .scrollContent)
             .modifier(EndScroller(requests: endRequests))
             .modifier(EndTracking { end in
                 if atEnd != end { atEnd = end }
@@ -466,6 +468,8 @@ struct ItemView: View {
                     HStack {
                         Spacer(minLength: 40)
                         Text(item.text)
+                            // Without this the bubble next to an image kept one line until the next layout pass.
+                            .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: Theme.radius))

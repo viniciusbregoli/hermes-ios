@@ -62,7 +62,7 @@ public struct SlashCommand: Equatable, Sendable {
         "kanban", "reload-mcp", "reload-skills", "reload_mcp", "reload_skills", "login", "voice", "pets",
         "density", "details", "logs", "mouse",
         "branch", "fork", "profile", "skin", "pet", "hatch", "generate-pet", "journey", "learning",
-        "memory-graph", "wake", "handoff", "browser", "resume", "sessions", "switch"]
+        "memory-graph", "wake", "handoff", "browser", "resume", "sessions", "switch", "prompt"]
 
     /// Runnable but kept out of suggestions: aliases of listed commands (`commands.catalog`'s `canon`),
     /// and /model (the model menu covers it).

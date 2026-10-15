@@ -95,10 +95,11 @@ private struct SlashRow: View {
         HStack(spacing: 8) {
             Text(item.label).font(Theme.mono).lineLimit(1).layoutPriority(1)
             if item.isSkill { SkillBadge() }
-            Text(item.detail).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+            Text(item.detail).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
+        .padding(.vertical, 4)
         .frame(minHeight: 38)
         .background(selected ? Theme.primary.opacity(0.12) : .clear)
         .contentShape(Rectangle())
@@ -228,8 +229,13 @@ struct SlashNoteView: View {
             if let warning = note.warning {
                 Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Theme.muted)
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(item.text).font(Theme.mono).fixedSize(horizontal: true, vertical: false)
+            if item.text.contains("\n") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Text(item.text).font(Theme.mono).fixedSize(horizontal: true, vertical: false)
+                }
+            } else {
+                // A one-line notice (usage hints, "Loop set...") wraps instead of running off the edge.
+                Text(item.text).font(Theme.mono)
             }
         }
         .padding(10)

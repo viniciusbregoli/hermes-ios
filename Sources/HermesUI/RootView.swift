@@ -208,7 +208,12 @@ struct MainView: View {
                 }
             }
             .themedList()
+            #if os(iOS)
+            // Always shown: the default drawer hides above the first row until the list is pulled down.
+            .searchable(text: $query, isPresented: $searching, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search messages")
+            #else
             .searchable(text: $query, isPresented: $searching, prompt: "Search messages")
+            #endif
             .searchFetch(store, query, into: $search)
             .refreshable { await store.refreshSessions() }
             .renameAlert(store, $renaming)
@@ -233,6 +238,7 @@ struct MainView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { newChat() } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel("New chat")
                         .keyboardShortcut("n", modifiers: .command)
                         .help("New chat (⌘N)")
                 }
@@ -435,6 +441,7 @@ struct SettingsView: View {
                 .listRowBackground(Theme.sidebar)
                 SubagentSettingsSection(gateway: gateway)
                 ReadAloudSettingsSection()
+                ApprovalsSettingsSection(gateway: gateway)
                 Section {
                     NavigationLink { RoutinesView(gateway: gateway, profile: nil) } label: {
                         Label("Routines", systemImage: "clock.arrow.circlepath")

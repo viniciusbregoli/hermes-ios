@@ -19,6 +19,7 @@ struct ControlsRow: View {
                     Label("Fast", systemImage: store.fast ? "hare.fill" : "hare")
                 }
                 .buttonStyle(Pill(active: store.fast))
+                .accessibilityValue(store.fast ? "On" : "Off")
             }
             DelegateButton(store: store, draft: $draft)
             CommandsButton(store: store, draft: $draft)
@@ -26,8 +27,9 @@ struct ControlsRow: View {
             ApprovalsMenu(store: store)
         }
         .font(.caption)
-        // The pills share one line; above the default size they truncate to "...".
-        .dynamicTypeSize(...DynamicTypeSize.large)
+        // The pills share one line: above the default size they truncate to "...", so they keep it whatever
+        // the chat text size is, including below 100%.
+        .dynamicTypeSize(.large)
         .padding(.horizontal, 10)
         .padding(.top, 6)
         .disabled(store.gateway.status != .online)
@@ -67,14 +69,11 @@ struct ApprovalsMenu: View {
     var body: some View {
         let globalOff = store.approvalMode == "off"
         Menu {
-            Section(globalOff ? "Approvals: off for all chats" : "Approvals: on for all chats") {
-                Toggle("Require approvals in all chats", isOn: Binding(get: { !globalOff }, set: { on in
-                    Task { await store.setApprovalsRequired(on) }
-                }))
-            }
+            // The all-chats switch lives in Settings, so a slip here can only change this chat.
             // info.yolo already includes the global mode, so the per-chat switch changes nothing while it is off.
             Toggle("Skip approvals in this chat", isOn: Binding(get: { store.yolo }, set: { on in Task { await store.setYolo(on) } }))
                 .disabled(globalOff)
+            if globalOff { Text("Approvals are off for all chats in Settings.") }
         } label: {
             if store.approvalsOff {
                 Label("YOLO", systemImage: "bolt.fill").foregroundStyle(Theme.destructive)
@@ -84,6 +83,45 @@ struct ApprovalsMenu: View {
         }
         .buttonStyle(Pill(active: store.approvalsOff, tint: Theme.destructive))
         .accessibilityLabel(store.approvalsOff ? "Approvals off" : "Approvals on")
+    }
+}
+
+/// Settings: whether risky tool calls ask first in every chat. Kept out of the chat's own menu, where the
+/// per-chat switch is one tap away and a slip would change every chat.
+struct ApprovalsSettingsSection: View {
+    let gateway: Gateway
+    @State private var required: Bool?
+    @State private var error: String?
+
+    var body: some View {
+        Section {
+            Toggle("Require approvals in all chats", isOn: Binding(get: { required ?? true }, set: save))
+                .disabled(required == nil)
+            if let error { Text(error).font(.caption).foregroundStyle(Theme.destructive) }
+        } header: {
+            Text("Approvals")
+        } footer: {
+            Text("Off lets every chat run tool calls without asking. A single chat can skip approvals from its own Approvals menu.")
+        }
+        .listRowBackground(Theme.sidebar)
+        .task(id: gateway.status) {
+            guard gateway.status == .online else { return }
+            do { required = try await gateway.approvalsRequired() } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func save(_ on: Bool) {
+        let before = required
+        required = on
+        Task {
+            do {
+                required = try await gateway.setApprovalsRequired(on)
+                error = nil
+            } catch {
+                required = before
+                self.error = "Couldn't change approvals: \(error.localizedDescription)"
+            }
+        }
     }
 }
 
@@ -297,6 +335,7 @@ struct ContextSheet: View {
                 if let usage {
                     Section("This session") {
                         Row("Input", Self.compact(usage.input))
+                        if usage.cached > 0 { Row("Cached input", Self.compact(usage.cached)) }
                         Row("Output", Self.compact(usage.output))
                         Row("Total", Self.compact(usage.total))
                         if let cost = usage.costUSD { Row("Cost", cost.formatted(.currency(code: "USD"))) }

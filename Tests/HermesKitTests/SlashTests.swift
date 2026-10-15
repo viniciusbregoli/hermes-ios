@@ -33,10 +33,11 @@ struct SlashTests {
         #expect(action("/new", botChat: true) == .compress)
         #expect(action("/bg x") == .background && action("/background x") == .background)
         #expect(action("/compact") == .compress && action("/help") == .commands)
-        #expect(action("/config") == .unavailable && action("/browser connect") == .unavailable)
+        #expect(action("/config") == .unavailable && action("/browser connect") == .unavailable && action("/prompt") == .unavailable)
         #expect(action("/usage") == .exec && action("/model") == .exec && action("/my-skill go") == .exec)
         #expect(SlashCommand.listed("/help") && SlashCommand.listed("fast"))
         #expect(!SlashCommand.listed("/model") && !SlashCommand.listed("/verbose") && !SlashCommand.listed("/reset"))
+        #expect(!SlashCommand.listed("/prompt"))
     }
 
     @Test func suggestionsHideTerminalCommandsAndPlaceArguments() {

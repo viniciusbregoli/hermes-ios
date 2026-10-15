@@ -49,6 +49,8 @@ public struct Usage: Hashable, Sendable {
     public var contextPercent: Int?
     public var estimated = false
     public var input = 0, output = 0, total = 0, compressions = 0
+    /// Input plus what came from the prompt cache; the server counts the cached part in `total` only.
+    public var prompt = 0
     public var costUSD: Double?
 
     public init?(_ json: JSON?) {
@@ -60,9 +62,13 @@ public struct Usage: Hashable, Sendable {
         input = o["input"]?.int ?? 0
         output = o["output"]?.int ?? 0
         total = o["total"]?.int ?? 0
+        prompt = o["prompt"]?.int ?? 0
         compressions = o["compressions"]?.int ?? 0
         costUSD = o["cost_usd"]?.double
     }
+
+    /// Prompt tokens served from or written to the cache, which `input` leaves out.
+    public var cached: Int { max(0, prompt - input) }
 
     /// Context fill from 0 to 1, or nil before the model's window is known.
     public var fraction: Double? {
@@ -111,21 +117,6 @@ extension ChatStore {
 
     public func setYolo(_ on: Bool) async {
         if let r = await configSet("yolo", on ? "1" : "0") { yolo = r["value"]?.string == "1" }
-    }
-
-    /// Turns approvals on or off for every chat in the Hermes config (approvals.mode manual/off).
-    /// The server re-sends session.info to live sessions; the local flags update now for chats without one.
-    public func setApprovalsRequired(_ on: Bool) async {
-        var params: [String: JSON] = ["key": "yolo", "scope": "global", "value": .string(on ? "0" : "1")]
-        if let sid = runtimeId { params["session_id"] = .string(sid) }
-        do {
-            let r = try await gateway.call("config.set", params)
-            let off = r["value"]?.string == "1"
-            approvalMode = off ? "off" : "manual"
-            yolo = off
-        } catch {
-            alert = error.localizedDescription
-        }
     }
 
     public func retry() async {
@@ -286,4 +277,18 @@ extension ChatStore {
 
 private extension String {
     var capitalizingFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+extension Gateway {
+    /// Whether the Hermes config asks before risky tool calls in every chat (approvals.mode is not "off").
+    public func approvalsRequired() async throws -> Bool {
+        try await call("config.get", ["key": "approvals.mode"])["value"]?.string != "off"
+    }
+
+    /// Turns approvals on or off for every chat in the Hermes config (approvals.mode manual/off) and returns
+    /// what the server stored. It re-sends session.info to the live sessions, so open chats follow.
+    public func setApprovalsRequired(_ on: Bool) async throws -> Bool {
+        let r = try await call("config.set", ["key": "yolo", "scope": "global", "value": .string(on ? "0" : "1")])
+        return r["value"]?.string != "1"
+    }
 }

@@ -498,6 +498,7 @@ struct ImageActionsBar: View {
             Button { Task { show(await ImageExport.saveToPhotos(image), success: "Saved to Photos") } } label: {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
+            .accessibilityLabel("Save to Photos")
             .keyboardShortcut("s", modifiers: .command)
         }
         .font(.callout.weight(.medium))

@@ -222,7 +222,7 @@ struct CreateGroupSheet: View {
                 } header: {
                     Text("Bots")
                 } footer: {
-                    Text("\(picked.count) of 2 to 6 picked. With no @mention, every bot hears and may answer.")
+                    Text("With no @mention, every bot hears and may answer.")
                 }
                 .listRowBackground(Theme.sidebar)
                 if let error {
@@ -235,6 +235,16 @@ struct CreateGroupSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    // Beside Create, so the 2 to 6 rule stays in view however far the bot list is scrolled.
+                    VStack(spacing: 0) {
+                        Text("New group").font(.headline)
+                        Text("\(picked.count) \(picked.count == 1 ? "bot" : "bots") picked (2 to 6)")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.muted)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 }
@@ -293,6 +303,7 @@ struct RoomView: View {
     /// Bumped to scroll to the end (see EndScroller).
     @State private var endRequests = 0
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.dismiss) private var dismiss
 
     private static let end = "room-end"
@@ -368,7 +379,8 @@ struct RoomView: View {
                         renaming = true
                     }
                     Section("Members") {
-                        ForEach(store.room.members) { m in Text("\(bots.label(m))  @\(m.handle)") }
+                        // Two lines for every member; one string wrapped wherever the menu's width happened to cut it.
+                        ForEach(store.room.members) { m in Text("\(bots.label(m))\n@\(m.handle)") }
                     }
                     Button("Disband", systemImage: "trash", role: .destructive) { confirmDisband = true }
                 } label: {
@@ -466,7 +478,9 @@ struct RoomView: View {
                     }
                 }
             }
-            Composer(draft: $draft, focused: $composerFocused, placeholder: "Message \(store.room.name)",
+            // At accessibility sizes the Send button leaves the field room for the first word only.
+            Composer(draft: $draft, focused: $composerFocused,
+                     placeholder: typeSize.isAccessibilitySize ? "Message" : "Message \(store.room.name)",
                      running: store.working, enabled: store.gateway.status == .online && !store.sending && !store.gone) {
                 let text = draft
                 draft = ""
@@ -530,11 +544,17 @@ struct RoomRowView: View {
                 }
             }
             .padding(.top, row.header ? 4 : -6)
-        case .passed, .cancelled:
+        case .passed:
             Text(row.text)
                 .font(.caption)
                 .foregroundStyle(Theme.muted)
                 .padding(.leading, Self.avatar + 8)
+        case .cancelled:
+            // Centred like the room's "You stopped the room" marker, so both stop markers look alike.
+            Text(row.text)
+                .font(.caption)
+                .foregroundStyle(Theme.muted)
+                .frame(maxWidth: .infinity)
         case .failed, .deferred:
             HStack(spacing: 8) {
                 Label(row.text, systemImage: "exclamationmark.triangle")
