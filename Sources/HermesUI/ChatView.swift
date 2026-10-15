@@ -27,6 +27,7 @@ struct ChatView: View {
     /// The sent message being edited, and the draft it pushed aside.
     @State private var editing: ChatItem?
     @State private var setAside = ""
+    @State private var setAsideQuotes: [Quote] = []
     @State private var speaker = Speaker()
     /// The reply open in the select-text sheet.
     @State private var quoting: ChatItem?
@@ -193,15 +194,16 @@ struct ChatView: View {
                                  pasteImages: { images in Task { await store.attachPasted(images) } }) {
                             let text = draft
                             if let id = store.queueEditing {
-                                store.editQueued(id, text: text)
+                                store.editQueued(id, text: text, quotes: store.pendingQuotes)
                                 endEditing()
                                 return
                             }
                             // An edit resends its text as written, even when it starts with a slash.
                             if let edit = editing {
+                                let quotes = store.takeQuotes()
                                 endEditing()
                                 pinNext = true
-                                Task { await store.rewind(edit, to: text) }
+                                Task { await store.rewind(edit, to: text, quotes: quotes) }
                                 return
                             }
                             if SlashCommand(draft) != nil { return runSlash(draft) }
@@ -251,7 +253,7 @@ struct ChatView: View {
         .sensoryFeedback(.selection, trigger: store.pendingQuotes.count)
         #if os(iOS)
         .sheet(item: $quoting) { item in
-            QuoteSheet(text: item.text) { range in store.quote(MarkdownView.plainText(item.text), range: range) }
+            QuoteSheet(text: item.text, store: store).chatTextSize()
         }
         #endif
         .onDisappear {
@@ -314,10 +316,11 @@ struct ChatView: View {
         }
         if store.canEdit(item) {
             out.append(MessageAction(title: "Edit and resend", icon: "pencil") {
-                if editing == nil, store.queueEditing == nil { setAside = draft }
+                if editing == nil, store.queueEditing == nil { stashComposer() }
                 store.queueEditing = nil
                 editing = item
                 draft = item.text
+                store.replaceQuotes(item.quotes)
                 composerFocused = true
             })
         }
@@ -340,21 +343,29 @@ struct ChatView: View {
         store.queueEditing = nil
         draft = setAside
         setAside = ""
+        store.replaceQuotes(setAsideQuotes)
+        setAsideQuotes = []
+    }
+
+    /// An edit takes over the composer; what was there comes back when it ends.
+    private func stashComposer() {
+        setAside = draft
+        setAsideQuotes = store.pendingQuotes
     }
 
     private func editQueued(_ m: QueuedMessage) {
-        if editing == nil, store.queueEditing == nil { setAside = draft }
+        if editing == nil, store.queueEditing == nil { stashComposer() }
         editing = nil
         store.queueEditing = m.id
         draft = m.text
+        store.replaceQuotes(m.quotes)
         composerFocused = true
     }
 
     private var sendButton: SendButton {
         SendButton(draft: draft, running: store.running, online: store.gateway.status == .online,
-                   // Quotes count like attachments: they can go out with no typed text, and a steer would drop them.
-                   hasAttachments: !store.attachments.isEmpty || !store.pendingQuotes.isEmpty, attaching: store.attachmentsPending,
-                   editingQueued: store.queueEditing != nil, editingSent: editing != nil)
+                   hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending,
+                   editingQueued: store.queueEditing != nil, editingSent: editing != nil, hasQuotes: !store.pendingQuotes.isEmpty)
     }
 
     private func steer(redirect: Bool) {
