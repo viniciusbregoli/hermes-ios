@@ -12,11 +12,13 @@ public struct QueuedMessage: Identifiable, Hashable, Sendable {
     public var text: String
     /// The @mention note, sent but not shown.
     var note = ""
+    public var quotes: [Quote] = []
     /// Shown instead of `text` (a skill or /goal kickoff); such messages are neither edited nor steered.
     public var display: String?
 
     public var shown: String { display ?? text }
-    public var editable: Bool { display == nil }
+    /// A message with quotes is not edited or steered until the composer can hold its quotes.
+    public var editable: Bool { display == nil && quotes.isEmpty }
 }
 
 /// What the composer's send button does, after T3 Code's composerSendPresentation.ts.
@@ -60,7 +62,7 @@ extension ChatStore {
 
     /// Everything waiting for the turn to end, as dimmed bubbles: the server's queue runs first.
     public var queuedBubbles: [ChatItem] {
-        queued + queue.map { ChatItem(id: $0.id, kind: .user, text: $0.shown) }
+        queued + queue.map { ChatItem(id: $0.id, kind: .user, text: $0.shown, quotes: $0.quotes) }
     }
 
     // MARK: - Editing
@@ -154,7 +156,7 @@ extension ChatStore {
         let next = queue.removeFirst()
         Task {
             // The failed message stays in the transcript with its error, like any send; the rest waits for Resume.
-            if !(await submit(next.text, note: next.note, display: next.display, queued: true, ownAttachments: false)), !queue.isEmpty { queuePaused = true }
+            if !(await submit(next.text, note: next.note, display: next.display, queued: true, ownAttachments: false, quotes: next.quotes)), !queue.isEmpty { queuePaused = true }
         }
     }
 
@@ -165,7 +167,7 @@ extension ChatStore {
         queue = []
         guard running, !queuePaused, let sid = runtimeId else { return }
         for m in pending {
-            _ = try? await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(m.text + m.note), "queued": true])
+            _ = try? await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(Quote.compose(m.quotes, with: m.text) + m.note), "queued": true])
         }
     }
 }

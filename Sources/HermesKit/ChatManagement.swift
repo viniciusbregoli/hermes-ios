@@ -232,7 +232,7 @@ extension ChatStore {
     }
 
     public func canEdit(_ item: ChatItem) -> Bool {
-        item.kind == .user && !item.text.isEmpty && rowId(of: item) != nil
+        item.kind == .user && (!item.text.isEmpty || !item.quotes.isEmpty) && rowId(of: item) != nil
     }
 
     /// Only the last reply of the chat can be regenerated, and only once its turn is over.
@@ -247,19 +247,21 @@ extension ChatStore {
     }
 
     /// Edit and resend: the server drops `item` and everything after it, then answers `text` in its place.
-    public func rewind(_ item: ChatItem, to text: String) async {
+    /// The message keeps its quotes unless `quotes` replaces them.
+    public func rewind(_ item: ChatItem, to text: String, quotes: [Quote]? = nil) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let row = rowId(of: item) else { return }
+        let quotes = Array((quotes ?? item.quotes).compactMap(\.normalized).prefix(Quote.maxCount))
+        guard !text.isEmpty || !quotes.isEmpty, let row = rowId(of: item) else { return }
         do {
             let sid = try await ensureSession()
             if running { try await stopTurn() }
             guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
             let firstTurn = !items[..<index].contains { $0.startsTurn }
-            let params = Self.rewindParams(session: sid, text: text, row: row, firstTurn: firstTurn,
+            let params = Self.rewindParams(session: sid, text: Quote.compose(quotes, with: text), row: row, firstTurn: firstTurn,
                                            rebind: items.compactMap(rowId(of:)))
             // Cut before the call: the turn's first events can arrive ahead of its response.
             let before = items
-            let bubble = ChatItem(id: localId(), kind: .user, text: text, date: Date())
+            let bubble = ChatItem(id: localId(), kind: .user, text: text, quotes: quotes, date: Date())
             items = Array(items[..<index]) + [bubble]
             running = true
             turnStartedAt = Date()
@@ -317,7 +319,7 @@ extension ChatStore {
     static func branchCount(_ items: [ChatItem], through id: String) -> Int {
         guard let end = items.firstIndex(where: { $0.id == id }) else { return 0 }
         return items[...end].filter {
-            [ChatItem.Kind.user, .agent, .assistant].contains($0.kind) && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            [ChatItem.Kind.user, .agent, .assistant].contains($0.kind) && (!$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !$0.quotes.isEmpty)
         }.count
     }
 
