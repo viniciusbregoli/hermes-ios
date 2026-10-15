@@ -14,7 +14,7 @@ Each story is tagged with one or both lenses.
 ### Prerequisites
 
 - One booted iPhone simulator (one simulator and one build at a time on this Mac) with the app built from `main`, or from the branch named in the run notes.
-- The app signed in to the munchkin gateway (`https://bregoli.tail9cdb5d.ts.net:8447`). The tester never types or logs the password; if the app is signed out, stop and ask the owner.
+- The app signed in to the munchkin gateway (URL in the owner's notes). The tester never types or logs the password; if the app is signed out, stop and ask the owner.
 - Simulator notifications allowed for Hermes (the app asks on the first send).
 - A hardware keyboard connected in the simulator (I/O > Keyboard > Connect Hardware Keyboard) for the keyboard stories, and a few photos in the simulator's Photos library for the attachment stories.
 
