@@ -326,7 +326,7 @@ struct RoomView: View {
             }
             .defaultScrollAnchor(.bottom)
             .modifier(EndScroller(requests: endRequests))
-            .scrollDismissesKeyboard(.immediately)
+            .scrollDismissesKeyboard(.interactively)
             // The working capsule's inset changes the content height too, so follow both.
             .onChange(of: EndKey(last: rows.last?.id, working: store.working)) {
                 Task { @MainActor in

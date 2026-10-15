@@ -226,7 +226,7 @@ struct SubagentDetail: View {
             }
         }
         .themedList()
-        .scrollDismissesKeyboard(.immediately)
+        .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Subagent")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -368,7 +368,7 @@ struct DelegateSheet: View {
                 }
             }
             .themedList()
-            .scrollDismissesKeyboard(.immediately)
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Delegate")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
