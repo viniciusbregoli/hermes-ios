@@ -47,6 +47,13 @@ public struct Quote: Hashable, Sendable {
                   suffix: String(source[upper...].prefix(Self.contextLength)))
     }
 
+    /// One line for a chip or an indicator: the quote's first words.
+    public var preview: String {
+        let flat = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return flat.count > Self.previewLength ? String(flat.prefix(Self.previewLength)).trimmingCharacters(in: .whitespaces) + "\u{2026}" : flat
+    }
+    static let previewLength = 48
+
     /// The quote as it is sent: line endings unified, edges trimmed, caps applied. nil when no text is left.
     var normalized: Quote? {
         let text = Self.clean(text, cap: Self.maxText)
@@ -187,5 +194,35 @@ extension Quote {
             textOnly = textOnly ?? source
         }
         return textOnly
+    }
+}
+
+// MARK: - Pending quotes
+
+extension ChatStore {
+    /// Adds a quote to the next message. false when the message already holds `Quote.maxCount` or the quote is empty.
+    @discardableResult
+    public func addQuote(_ quote: Quote) -> Bool {
+        guard pendingQuotes.count < Quote.maxCount, let quote = quote.normalized else { return false }
+        pendingQuotes.append(quote)
+        return true
+    }
+
+    /// Quotes `range` of a reply's plain text; says why in `alert` when the message cannot take another quote.
+    public func quote(_ plain: String, range: NSRange) {
+        guard pendingQuotes.count < Quote.maxCount else { alert = "A message can quote up to \(Quote.maxCount) passages."; return }
+        guard let quote = Quote(in: plain, range: range) else { return }
+        addQuote(quote)
+    }
+
+    public func removeQuote(at index: Int) {
+        guard pendingQuotes.indices.contains(index) else { return }
+        pendingQuotes.remove(at: index)
+    }
+
+    /// The pending quotes for a send; the composer is left empty.
+    public func takeQuotes() -> [Quote] {
+        defer { pendingQuotes = [] }
+        return pendingQuotes
     }
 }

@@ -28,6 +28,8 @@ struct ChatView: View {
     @State private var editing: ChatItem?
     @State private var setAside = ""
     @State private var speaker = Speaker()
+    /// The reply open in the select-text sheet.
+    @State private var quoting: ChatItem?
     @Environment(\.scenePhase) private var scenePhase
     /// Landscape on a phone: the controls row hides behind a button so the transcript keeps some height above the keyboard.
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -166,6 +168,7 @@ struct ChatView: View {
                     if verticalSizeClass != .compact || showControls { ControlsRow(store: store, draft: $draft) }
                     if editing != nil { EditBanner(cancel: endEditing) }
                     if store.queueEditing != nil { EditBanner(detail: "Updates the queued message; it still sends when the turn ends.", cancel: endEditing) }
+                    QuoteBar(store: store)
                     AttachmentChips(store: store)
                     HStack(alignment: .bottom, spacing: 0) {
                         AttachButton(store: store)
@@ -208,7 +211,7 @@ struct ChatView: View {
                             pinNext = !store.running
                             Notifier.shared.prepare()
                             let note = bots?.mentionNote(for: text, excluding: activeBot) ?? ""
-                            Task { await store.send(text, note: note) }
+                            Task { await store.send(text, quotes: store.takeQuotes(), note: note) }
                         }
                     }
                     // The attach and send icons are fixed 44 pt frames and the field would shrink to "Messa...", so the row stops growing here.
@@ -245,6 +248,12 @@ struct ChatView: View {
             if !Task.isCancelled { Drafts.save(draft, for: draftKey) }
         }
         .sensoryFeedback(.success, trigger: store.finishedTurns) { _, _ in store.visible }
+        .sensoryFeedback(.selection, trigger: store.pendingQuotes.count)
+        #if os(iOS)
+        .sheet(item: $quoting) { item in
+            QuoteSheet(text: item.text) { range in store.quote(MarkdownView.plainText(item.text), range: range) }
+        }
+        #endif
         .onDisappear {
             Drafts.save(draft, for: draftKey)
             speaker.stop()
@@ -293,6 +302,16 @@ struct ChatView: View {
             out.append(MessageAction(title: "Read aloud", icon: "speaker.wave.2") { speaker.speak(item.text, gateway: store.gateway) })
         }
         guard !store.readOnly else { return out }
+        if item.kind == .assistant, !item.text.isEmpty, !item.streaming {
+            #if os(iOS)
+            out.append(MessageAction(title: "Select text to quote", icon: "text.quote") { quoting = item })
+            #else
+            out.append(MessageAction(title: "Quote reply", icon: "text.quote") {
+                let plain = MarkdownView.plainText(item.text)
+                store.quote(plain, range: NSRange(location: 0, length: plain.utf16.count))
+            })
+            #endif
+        }
         if store.canEdit(item) {
             out.append(MessageAction(title: "Edit and resend", icon: "pencil") {
                 if editing == nil, store.queueEditing == nil { setAside = draft }
@@ -333,7 +352,8 @@ struct ChatView: View {
 
     private var sendButton: SendButton {
         SendButton(draft: draft, running: store.running, online: store.gateway.status == .online,
-                   hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending,
+                   // Quotes count like attachments: they can go out with no typed text, and a steer would drop them.
+                   hasAttachments: !store.attachments.isEmpty || !store.pendingQuotes.isEmpty, attaching: store.attachmentsPending,
                    editingQueued: store.queueEditing != nil, editingSent: editing != nil)
     }
 
@@ -467,10 +487,15 @@ struct ItemView: View {
         case .user:
             VStack(alignment: .trailing, spacing: 6) {
                 if !item.images.isEmpty || !item.files.isEmpty { MessageAttachments(item: item) }
-                if !item.text.isEmpty {
+                if !item.text.isEmpty || !item.quotes.isEmpty {
                     HStack {
                         Spacer(minLength: 40)
-                        Text(item.text)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(item.quotes.enumerated()), id: \.offset) { _, quote in
+                                Label(quote.preview, systemImage: "text.quote").font(.footnote).foregroundStyle(Theme.muted).lineLimit(2)
+                            }
+                            if !item.text.isEmpty { Text(item.text) }
+                        }
                             // Without this the bubble next to an image kept one line until the next layout pass.
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 12)

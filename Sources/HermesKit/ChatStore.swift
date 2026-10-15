@@ -106,6 +106,8 @@ public final class ChatStore {
     public var alert: String?
     /// Photos and files picked in the composer for the next message.
     public internal(set) var attachments: [Attachment] = []
+    /// Passages quoted from earlier replies for the next message; `send` takes them.
+    public internal(set) var pendingQuotes: [Quote] = []
     /// When the running turn started, for the working timer.
     public internal(set) var turnStartedAt: Date?
     /// How live turns ended, by the id of the message that started each one.
@@ -260,6 +262,7 @@ public final class ChatStore {
             items = []
             requests = []
             attachments = []
+            pendingQuotes = []
             running = false
             statusText = nil
             turnStartedAt = nil
@@ -387,6 +390,7 @@ public final class ChatStore {
             running = false
             // Still staged on the server, so a retry sends them with the same refs.
             if attachments.isEmpty { attachments = sent }
+            if pendingQuotes.isEmpty { pendingQuotes = quotes }
             turnStartedAt = nil
             items.append(ChatItem(id: localId(), kind: .error, text: error.localizedDescription, date: Date()))
             return false

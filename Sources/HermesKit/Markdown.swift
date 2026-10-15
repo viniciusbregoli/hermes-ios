@@ -37,6 +37,18 @@ public struct MarkdownNode: Hashable, Sendable {
     }
 }
 
+public extension MarkdownNode {
+    /// Where each top-level block sits in `plainText` (UTF-16 offsets), so a view can style the plain text by block.
+    var blockRanges: [(kind: Kind, range: NSRange)] {
+        guard kind == .document else { return [] }
+        var at = 0
+        return children.map { child in
+            defer { at += child.plainText.utf16.count + 2 }
+            return (child.kind, NSRange(location: at, length: child.plainText.utf16.count))
+        }
+    }
+}
+
 public enum Markdown {
     public static func parse(_ text: String) -> MarkdownNode {
         let source = Media.renderTags(text)

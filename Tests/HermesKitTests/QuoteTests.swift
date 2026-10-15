@@ -247,4 +247,54 @@ struct QuoteTests {
         await store.send("   ", quotes: [Quote(text: " ")])
         #expect(store.queue.count == 2)
     }
+
+    // MARK: Pending quotes
+
+    @Test func previewIsTheFirstWordsOnOneLine() {
+        #expect(Quote(text: "Apples are red.").preview == "Apples are red.")
+        #expect(Quote(text: "  line one\n\n  line   two ").preview == "line one line two")
+        let long = Quote(text: String(repeating: "word ", count: 30)).preview
+        #expect(long.hasSuffix("\u{2026}") && long.count <= Quote.previewLength + 1)
+    }
+
+    @MainActor @Test func pendingQuotesAreAddedRemovedAndTakenOnce() {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        #expect(!store.addQuote(Quote(text: "  ")))
+        #expect(store.addQuote(Quote(text: " one ", comment: "c")) && store.addQuote(Quote(text: "two")))
+        #expect(store.pendingQuotes.map(\.text) == ["one", "two"])
+        store.removeQuote(at: 5)
+        store.removeQuote(at: 0)
+        #expect(store.pendingQuotes.map(\.text) == ["two"])
+        #expect(store.takeQuotes().map(\.text) == ["two"] && store.pendingQuotes.isEmpty && store.takeQuotes().isEmpty)
+    }
+
+    @MainActor @Test func aMessageTakesAtMostSixPendingQuotes() {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        for i in 1...Quote.maxCount { #expect(store.addQuote(Quote(text: "q\(i)"))) }
+        #expect(!store.addQuote(Quote(text: "one too many")))
+        store.quote("plain reply", range: NSRange(location: 0, length: 5))
+        #expect(store.pendingQuotes.count == Quote.maxCount && store.alert != nil)
+    }
+
+    @MainActor @Test func quotingARangeKeepsItsContext() {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        store.quote("One apple a day.", range: NSRange(location: 4, length: 5))
+        #expect(store.pendingQuotes == [Quote(text: "apple", prefix: "One ", suffix: " a day.")])
+    }
+
+    @MainActor @Test func switchingChatsDropsPendingQuotes() async {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        store.addQuote(Quote(text: "left behind"))
+        await store.open(nil)
+        #expect(store.pendingQuotes.isEmpty)
+    }
+
+    @Test func blockRangesLocateEachTopLevelBlockInThePlainText() {
+        let node = Markdown.parse("# Title\n\nSome **bold** text.\n\n```swift\nlet x = 1\n```\n\n- a\n- b\n\nEnd \u{1F34E}")
+        let plain = node.plainText as NSString
+        let blocks = node.blockRanges
+        #expect(blocks.count == 5)
+        #expect(blocks.map { plain.substring(with: $0.range) } == ["Title", "Some bold text.", "let x = 1", "- a\n- b", "End \u{1F34E}"])
+        #expect(Markdown.parse("").blockRanges.isEmpty)
+    }
 }
