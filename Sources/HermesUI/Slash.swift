@@ -95,10 +95,11 @@ private struct SlashRow: View {
         HStack(spacing: 8) {
             Text(item.label).font(Theme.mono).lineLimit(1).layoutPriority(1)
             if item.isSkill { SkillBadge() }
-            Text(item.detail).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+            Text(item.detail).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
+        .padding(.vertical, 4)
         .frame(minHeight: 38)
         .background(selected ? Theme.primary.opacity(0.12) : .clear)
         .contentShape(Rectangle())
