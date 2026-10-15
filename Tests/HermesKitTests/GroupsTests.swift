@@ -85,7 +85,7 @@ struct RoomTimelineTests {
         ], room: room)
         #expect(rows.map(\.kind) == [.cancelled, .notice, .notice])
         #expect(rows[0].text == "librarian stopped for your newer message")
-        #expect(rows[1].text == "Stopped")
+        #expect(rows[1].text == "You stopped the room")
     }
 }
 

@@ -544,11 +544,17 @@ struct RoomRowView: View {
                 }
             }
             .padding(.top, row.header ? 4 : -6)
-        case .passed, .cancelled:
+        case .passed:
             Text(row.text)
                 .font(.caption)
                 .foregroundStyle(Theme.muted)
                 .padding(.leading, Self.avatar + 8)
+        case .cancelled:
+            // Centred like the room's "You stopped the room" marker, so both stop markers look alike.
+            Text(row.text)
+                .font(.caption)
+                .foregroundStyle(Theme.muted)
+                .frame(maxWidth: .infinity)
         case .failed, .deferred:
             HStack(spacing: 8) {
                 Label(row.text, systemImage: "exclamationmark.triangle")

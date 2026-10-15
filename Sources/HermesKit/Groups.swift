@@ -220,7 +220,7 @@ public enum RoomTimeline {
                                     text: "The bots reached the room's limit of \(RoomDiscussion.maxRounds) rounds or \(RoomDiscussion.maxMessages) replies",
                                     at: e.at))
             case "room.stop_requested":
-                rows.append(RoomRow(seq: e.seq, kind: .notice, text: "Stopped", at: e.at))
+                rows.append(RoomRow(seq: e.seq, kind: .notice, text: "You stopped the room", at: e.at))
             case "room.renamed":
                 rows.append(RoomRow(seq: e.seq, kind: .notice, text: "Renamed to \u{201C}\(e.payload["name"]?.string ?? "")\u{201D}", at: e.at))
             case "room.disbanded":
