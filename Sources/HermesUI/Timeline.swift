@@ -380,30 +380,22 @@ struct WorkingControls: View {
 // MARK: - Shimmer
 
 extension View {
-    /// A light band sweeping across live text.
+    /// A slow opacity pulse on live text. A highlight masked to the text redrew the row on every display
+    /// frame (12 to 18% CPU for as long as a turn ran), and so does any animation that runs at the full
+    /// frame rate. The pulse is slow, so it is stepped at 6 fps.
     func shimmer(_ active: Bool) -> some View { modifier(Shimmer(active: active)) }
 }
 
 struct Shimmer: ViewModifier {
     let active: Bool
-    @State private var phase: CGFloat = -0.6
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         if active && !reduceMotion {
-            content
-                .overlay {
-                    GeometryReader { geo in
-                        LinearGradient(colors: [.clear, Theme.foreground.opacity(0.9), .clear], startPoint: .leading, endPoint: .trailing)
-                            .frame(width: geo.size.width * 0.6)
-                            .offset(x: phase * geo.size.width)
-                    }
-                    .mask(content)
-                    .allowsHitTesting(false)
-                }
-                .onAppear {
-                    withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) { phase = 1 }
-                }
+            TimelineView(.animation(minimumInterval: 1.0 / 6)) { context in
+                let wave = (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / 1.8) + 1) / 2
+                content.opacity(0.45 + 0.55 * wave)
+            }
         } else {
             content
         }
