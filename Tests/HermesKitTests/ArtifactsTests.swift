@@ -26,6 +26,14 @@ struct ArtifactsTests {
         #expect(values([["role": "assistant", "content": "see /tmp/build.log.final"]]).isEmpty)
     }
 
+    @Test func examplePathsFromDocumentationAreNotArtifacts() {
+        let text = "Send files with MEDIA:/absolute/path.png or MEDIA:/path/to/chart.png, e.g. ![x](/your/path/a.png). Real: MEDIA:/tmp/real.png"
+        #expect(values([["role": "assistant", "content": .string(text)]]) == ["/tmp/real.png"])
+        let stale = Artifact(value: "/absolute/path.png", sessionId: "s1", sessionTitle: "Chat", date: t0)
+        let real = Artifact(value: "/tmp/real.png", sessionId: "s1", sessionTitle: "Chat", date: t0)
+        #expect(Artifacts.merge([[stale, real]]).map(\.value) == ["/tmp/real.png"])
+    }
+
     @Test func userMessagesAreNotArtifacts() {
         #expect(values([["role": "user", "content": "use /tmp/input.csv"]]).isEmpty)
     }
