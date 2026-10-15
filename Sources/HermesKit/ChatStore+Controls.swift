@@ -169,6 +169,7 @@ extension ChatStore {
         steerFeedback = nil
         control = nil
         controlVersion += 1
+        pauseReasserts = nil
         notes = [:]
         retryText = nil
         reasoningEffort = ""

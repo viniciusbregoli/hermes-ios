@@ -153,7 +153,11 @@ public final class Gateway {
         return inbox.filter { $0.sessionId == session }
     }
 
+    /// Answers calls in place of the socket, for tests.
+    @ObservationIgnored var stub: ((String, [String: JSON]) async throws -> JSON)?
+
     public func call(_ method: String, _ params: [String: JSON] = [:]) async throws -> JSON {
+        if let stub { return try await stub(method, params) }
         guard let ws = socket, status == .online else { throw GatewayError.offline }
         counter += 1
         let id = "r\(counter)"

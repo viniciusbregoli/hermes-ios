@@ -168,6 +168,18 @@ extension ChatStore {
         return out
     }
 
+    /// The server sends every image staged on a session with the next prompt, so the composer's staged photos
+    /// are taken off it before a message that isn't theirs goes out. They stay in the composer and are staged
+    /// again by `takeAttachments` when their own message is sent.
+    func unstageImages(on sid: String) async {
+        for a in attachments where a.isImage && a.sessionId == sid {
+            guard let path = a.path, let i = attachments.firstIndex(where: { $0.id == a.id }) else { continue }
+            attachments[i].path = nil
+            attachments[i].sessionId = nil
+            _ = try? await gateway.call("image.detach", ["session_id": .string(sid), "path": .string(path)])
+        }
+    }
+
     /// Takes the composer's attachments for a send, re-staging any that landed on a runtime
     /// session we have since lost (reconnect, resume).
     func takeAttachments(for sid: String) async throws -> [Attachment] {

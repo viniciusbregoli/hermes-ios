@@ -145,6 +145,8 @@ public final class ChatStore {
     public internal(set) var control: SessionControl?
     /// Counts control updates, so a read that raced one doesn't roll it back.
     @ObservationIgnored var controlVersion = 0
+    /// Set while the user wants the goal paused: how many times a pause the gateway lost may be sent again.
+    @ObservationIgnored var pauseReasserts: Int?
     /// Short labels under user messages that steered or redirected a running turn, by item id.
     public internal(set) var notes: [String: String] = [:]
     /// The user message to resend when the last turn failed with a retryable error.
@@ -343,14 +345,17 @@ public final class ChatStore {
         await submit(text, note: note, display: display, queued: running)
     }
 
-    /// - Parameter queued: asks a busy server to queue the message rather than steer or redirect with it.
+    /// - Parameters:
+    ///   - queued: asks a busy server to queue the message rather than steer or redirect with it.
+    ///   - ownAttachments: false for a message held on this device, which was queued with no attachments:
+    ///     whatever the composer holds now was staged for a later message and stays out of this one.
     /// - Returns: false when the message didn't reach the server.
     @discardableResult
-    func submit(_ text: String, note: String, display: String?, queued: Bool) async -> Bool {
+    func submit(_ text: String, note: String, display: String?, queued: Bool, ownAttachments: Bool = true) async -> Bool {
         var sent: [Attachment] = []
         do {
             let sid = try await ensureSession()
-            sent = try await takeAttachments(for: sid)
+            if ownAttachments { sent = try await takeAttachments(for: sid) } else { await unstageImages(on: sid) }
             let bubble = ChatItem(id: localId(), kind: .user, text: display ?? text, images: sent.filter(\.isImage).map { .data($0.data) },
                                   files: sent.filter { !$0.isImage }.map(\.name), date: Date())
             // A busy session decides where the message goes (queue, steer, redirect), so wait for its answer.

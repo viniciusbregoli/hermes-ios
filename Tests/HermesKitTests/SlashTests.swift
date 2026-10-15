@@ -90,6 +90,33 @@ struct SlashTests {
         #expect(store.items.last?.text == "No answer came back.")
     }
 
+    @Test func answerBeforeTheRpcReplyStillFillsTheCard() {
+        // The card is added before prompt.btw is called, with no task id yet.
+        store.items.append(ChatItem(id: "s1", kind: .side, slash: SlashNote(header: "why?", pending: true)))
+        emit("btw.complete", ["task_id": "btw_1", "text": "Because.", "question": "why?"])
+        #expect(store.items.count == 2 && store.items.last?.text == "Because.")
+        #expect(store.items.last?.slash?.pending == false && store.items.last?.slash?.taskId == "btw_1")
+        // A /bg card waits for its own kind of answer only.
+        store.items.append(ChatItem(id: "s2", kind: .side, slash: SlashNote(header: "x", background: true, pending: true)))
+        emit("btw.complete", ["task_id": "btw_2", "text": "Other."])
+        #expect(store.items.first { $0.id == "s2" }?.slash?.pending == true)
+    }
+
+    @Test func whitespaceOnlyAnswersCountAsNoAnswer() {
+        store.items.append(ChatItem(id: "s1", kind: .side, slash: SlashNote(header: "why?", taskId: "btw_1", pending: true)))
+        emit("btw.complete", ["task_id": "btw_1", "text": " \n"])
+        #expect(store.items.last?.text == "No answer came back." && store.items.last?.slash?.pending == false)
+    }
+
+    @Test func sideCommandGivesItsCardTheTaskIdFromTheReply() async {
+        gateway.stub = { method, _ in method == "prompt.btw" ? ["task_id": "btw_7"] : nil }
+        _ = await store.runSlash("/btw why?")
+        #expect(store.items.last?.kind == .side && store.items.last?.slash?.taskId == "btw_7" && store.items.last?.slash?.pending == true)
+        gateway.stub = { _, _ in throw GatewayError.offline }
+        _ = await store.runSlash("/btw again?")
+        #expect(store.items.filter { $0.kind == .side }.count == 1 && store.items.last?.kind == .notice)
+    }
+
     @Test func localCommandsAnswerWithoutTheGateway() async {
         #expect(await store.runSlash("/new") == .newChat)
         #expect(await store.runSlash("/help") == .showCommands)

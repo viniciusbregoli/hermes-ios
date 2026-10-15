@@ -42,17 +42,20 @@ public enum Markdown {
         let source = Media.renderTags(text)
         let options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: true, interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
-        guard let parsed = try? AttributedString(markdown: source, options: options) else {
+        func plain() -> MarkdownNode {
             var p = MarkdownNode(kind: .paragraph)
             p.text = AttributedString(text)
             return MarkdownNode(kind: .document, children: [p])
         }
+        guard let parsed = try? AttributedString(markdown: source, options: options) else { return plain() }
         var root = MarkdownNode(kind: .document)
         for run in parsed.runs {
             // Components run innermost first; walk them from the document down.
             let path = (run.presentationIntent?.components ?? []).reversed()
             insert(AttributedString(parsed[run.range]), path: Array(path), into: &root)
         }
+        // A bare list marker such as "4." parses to an empty list item, which would show nothing at all.
+        if root.children.isEmpty, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return plain() }
         return finish(root)
     }
 

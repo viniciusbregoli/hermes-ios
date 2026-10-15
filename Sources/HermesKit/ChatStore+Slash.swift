@@ -10,6 +10,8 @@ extension ChatStore {
     /// Runs a composer line that `SlashCommand` accepted; output lands in the transcript as notice rows.
     public func runSlash(_ text: String) async -> SlashOutcome {
         guard let cmd = SlashCommand(text) else { return .done }
+        // /goal set, resume and clear are the user's word on the goal: stop holding a pause.
+        if cmd.name == "goal" { pauseReasserts = nil }
         let outcome = await run(cmd, depth: 0)
         // The gateway pushes session.control.update too; a read covers a chat that missed it.
         if Self.controlCommands.contains(cmd.name) { await refreshControl() }
@@ -116,9 +118,16 @@ extension ChatStore {
             return
         }
         let sid = try await ensureSession()
-        let r = try await gateway.call(background ? "prompt.background" : "prompt.btw", ["session_id": .string(sid), "text": .string(cmd.arg)])
-        items.append(ChatItem(id: localId(), kind: .side, date: Date(), slash: SlashNote(
-            header: cmd.arg, taskId: r["task_id"]?.string, background: background, pending: true)))
+        // The card goes in before the RPC: the answer can reach us before the reply that carries its task id.
+        let card = ChatItem(id: localId(), kind: .side, date: Date(), slash: SlashNote(header: cmd.arg, background: background, pending: true))
+        items.append(card)
+        do {
+            let r = try await gateway.call(background ? "prompt.background" : "prompt.btw", ["session_id": .string(sid), "text": .string(cmd.arg)])
+            if let i = items.firstIndex(where: { $0.id == card.id }) { items[i].slash?.taskId = r["task_id"]?.string }
+        } catch {
+            items.removeAll { $0.id == card.id }
+            throw error
+        }
     }
 
     private func compress(_ focus: String, header: String) async throws {
@@ -175,10 +184,16 @@ extension ChatStore {
     /// Fills in /btw and /bg cards; runs from `handleControls` for the open chat.
     func foldSlash(_ type: String, _ p: JSON) {
         guard type == "btw.complete" || type == "background.complete" else { return }
-        let text = p["text"]?.string?.nonEmpty ?? "No answer came back."
-        if let id = p["task_id"]?.string, let i = items.lastIndex(where: { $0.slash?.taskId == id }) {
+        // A whitespace-only answer renders as an empty card, so it counts as no answer.
+        let text = (p["text"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "No answer came back."
+        let background = type == "background.complete"
+        let id = p["task_id"]?.string
+        // A card still waiting for its task id is the one whose RPC reply lost the race with this answer.
+        let waiting = items.firstIndex { $0.slash?.pending == true && $0.slash?.taskId == nil && $0.slash?.background == background }
+        if let i = id.flatMap({ id in items.lastIndex { $0.slash?.taskId == id } }) ?? waiting {
             items[i].text = text
             items[i].slash?.pending = false
+            items[i].slash?.taskId = id
         } else {
             // Started before this chat was reopened: still worth showing.
             items.append(ChatItem(id: localId(), kind: .side, text: text, date: Date(), slash: SlashNote(

@@ -137,4 +137,36 @@ struct QueueTests {
         store.resetControls()
         #expect(store.queue.isEmpty && !store.queuePaused && store.queueEditing == nil)
     }
+
+    @Test func aQueuedMessageLeavesLaterPhotosOutOfItsSend() async {
+        var calls: [(method: String, params: [String: JSON])] = []
+        gateway.stub = { method, params in
+            if method.hasPrefix("image.") || method == "prompt.submit" { calls.append((method, params)) }
+            switch method {
+            case "image.attach_bytes": return ["attached": true, "path": "/img/restaged.jpg"]
+            case "prompt.submit": return ["status": params["queued"] == true ? "queued" : "started"]
+            default: return nil
+            }
+        }
+        await queue("text first")
+        var photo = Attachment(name: "p.jpg", mime: "image/jpeg", data: Data([1]))
+        photo.state = .ready
+        photo.sessionId = "rt1"
+        photo.path = "/img/p.jpg"
+        store.attachments = [photo]
+
+        emit("message.complete", ["status": "complete"])
+        for _ in 0..<200 where !calls.contains(where: { $0.method == "prompt.submit" }) { await Task.yield() }
+        let methods = calls.map(\.method)
+        // The staged photo comes off the session before the text goes out, and stays in the composer.
+        #expect(methods == ["image.detach", "prompt.submit"])
+        #expect(calls[0].params["path"] == "/img/p.jpg")
+        #expect(calls[1].params["text"] == "text first")
+        #expect(store.attachments.map(\.id) == [photo.id] && store.attachments[0].path == nil)
+
+        // Its own message stages it again and carries it.
+        await store.send("the photo")
+        #expect(calls.map(\.method) == ["image.detach", "prompt.submit", "image.attach_bytes", "prompt.submit"])
+        #expect(store.attachments.isEmpty && store.queued.last?.images.count == 1)
+    }
 }
