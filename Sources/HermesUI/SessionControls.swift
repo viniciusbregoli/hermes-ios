@@ -19,6 +19,7 @@ struct ControlsRow: View {
                     Label("Fast", systemImage: store.fast ? "hare.fill" : "hare")
                 }
                 .buttonStyle(Pill(active: store.fast))
+                .accessibilityValue(store.fast ? "On" : "Off")
             }
             DelegateButton(store: store, draft: $draft)
             CommandsButton(store: store, draft: $draft)
