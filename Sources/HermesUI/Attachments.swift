@@ -6,7 +6,7 @@ import HermesKit
 
 // MARK: - Picking
 
-/// Paperclip menu in the composer: photo library, camera (when the device has one) and files.
+/// Paperclip menu in the composer: photo library, camera (when the device has one), files and a pasted image.
 struct AttachButton: View {
     let store: ChatStore
     @State private var photos: [PhotosPickerItem] = []
@@ -23,6 +23,12 @@ struct AttachButton: View {
             }
             #endif
             Button { pickingFiles = true } label: { Label("Files", systemImage: "folder") }
+            #if os(iOS)
+            // PasteButton reads the pasteboard without the system's paste prompt and disables itself when there is no image.
+            PasteButton(supportedContentTypes: [.image]) { providers in
+                Task { await store.attachPasted(await PasteboardImages.load(providers)) }
+            }
+            #endif
         } label: {
             Image(systemName: "paperclip")
                 .frame(width: 44, height: 44)
@@ -77,7 +83,126 @@ struct AttachButton: View {
     }
 }
 
+extension View {
+    /// Lets Paste in this text field stage images through `onImages`; plain text paste is unchanged.
+    @ViewBuilder func pastesImages(_ onImages: (([Data]) -> Void)?) -> some View {
+        #if os(iOS)
+        if let onImages { background(ImagePasteHook(onImages: onImages)) } else { self }
+        #else
+        self
+        #endif
+    }
+}
+
 #if os(iOS)
+/// Images on the system pasteboard, as the original bytes so PNG transparency survives to `Attachment.pasted`.
+enum PasteboardImages {
+    static func load(_ providers: [NSItemProvider] = UIPasteboard.general.itemProviders) async -> [Data] {
+        var out: [Data] = []
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            let data = await withCheckedContinuation { c in
+                _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in c.resume(returning: data) }
+            }
+            if let data { out.append(data) }
+        }
+        return out
+    }
+}
+
+/// SwiftUI's TextField never offers Paste for an image (UITextView only enables it for text), and the
+/// view is private, so this finds the text input under the modified view and gives it a subclass that does.
+/// `onImages` runs for both the edit menu's Paste and a hardware Cmd+V; text paste is left to UIKit.
+private struct ImagePasteHook: UIViewRepresentable {
+    let onImages: ([Data]) -> Void
+
+    func makeUIView(context: Context) -> Finder { Finder() }
+    func updateUIView(_ view: Finder, context: Context) { view.onImages = onImages; view.setNeedsLayout() }
+
+    final class Finder: UIView {
+        var onImages: (([Data]) -> Void)?
+        private weak var target: UIView?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            if target == nil || target?.window == nil { target = textInput() }
+            guard let target else { return }
+            PasteHook.install(on: target) { [weak self] in self?.onImages?($0) }
+        }
+
+        /// The text input whose frame overlaps this one most; the TextField is what this view is the background of.
+        private func textInput() -> UIView? {
+            guard window != nil else { return nil }
+            let mine = convert(bounds, to: nil)
+            var best: (view: UIView, area: CGFloat)?
+            var root: UIView? = self
+            for _ in 0..<5 {
+                root = root?.superview
+                guard let root else { break }
+                for candidate in Self.inputs(in: root) {
+                    let hit = candidate.convert(candidate.bounds, to: nil).intersection(mine)
+                    let area = hit.isNull ? 0 : hit.width * hit.height
+                    if area > (best?.area ?? 0) { best = (candidate, area) }
+                }
+                if best != nil { break }
+            }
+            return best?.view
+        }
+
+        private static func inputs(in view: UIView) -> [UIView] {
+            (view is UITextView || view is UITextField ? [view] : []) + view.subviews.flatMap(inputs(in:))
+        }
+    }
+}
+
+/// Swaps a text input's class for a dynamic subclass (what KVO does) that accepts Paste when the
+/// pasteboard holds an image, and hands the images to the handler instead of pasting.
+private enum PasteHook {
+    private final class Box { var handler: ([Data]) -> Void; init(_ h: @escaping ([Data]) -> Void) { handler = h } }
+    nonisolated(unsafe) private static var key = 0
+
+    static func install(on view: UIView, handler: @escaping ([Data]) -> Void) {
+        if let box = objc_getAssociatedObject(view, &key) as? Box { box.handler = handler; return }
+        objc_setAssociatedObject(view, &key, Box(handler), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        let base: AnyClass = type(of: view)
+        let name = "HermesPaste_" + NSStringFromClass(base)
+        object_setClass(view, NSClassFromString(name) ?? subclass(of: base, named: name))
+    }
+
+    private static func subclass(of base: AnyClass, named name: String) -> AnyClass {
+        let sub = objc_allocateClassPair(base, name, 0)!
+        let canSel = #selector(UIResponder.canPerformAction(_:withSender:))
+        let pasteSel = #selector(UIResponder.paste(_:))
+        typealias CanFn = @convention(c) (AnyObject, Selector, Selector, Any?) -> Bool
+        typealias PasteFn = @convention(c) (AnyObject, Selector, Any?) -> Void
+        let canSuper = unsafeBitCast(class_getMethodImplementation(base, canSel), to: CanFn.self)
+        let pasteSuper = unsafeBitCast(class_getMethodImplementation(base, pasteSel), to: PasteFn.self)
+
+        let can: @convention(block) (AnyObject, Selector, Any?) -> Bool = { me, action, sender in
+            if action == pasteSel, objc_getAssociatedObject(me, &key) != nil, UIPasteboard.general.hasImages { return true }
+            return canSuper(me, canSel, action, sender)
+        }
+        let paste: @convention(block) (AnyObject, Any?) -> Void = { me, sender in
+            guard let box = objc_getAssociatedObject(me, &key) as? Box, UIPasteboard.general.hasImages else {
+                return pasteSuper(me, pasteSel, sender)
+            }
+            Task { @MainActor in
+                let images = await PasteboardImages.load()
+                if !images.isEmpty { box.handler(images) }
+            }
+        }
+        class_addMethod(sub, canSel, imp_implementationWithBlock(can), method_getTypeEncoding(class_getInstanceMethod(base, canSel)!))
+        class_addMethod(sub, pasteSel, imp_implementationWithBlock(paste), method_getTypeEncoding(class_getInstanceMethod(base, pasteSel)!))
+        objc_registerClassPair(sub)
+        return sub
+    }
+}
+
 struct CameraPicker: UIViewControllerRepresentable {
     let done: (UIImage?) -> Void
 
@@ -103,29 +228,6 @@ struct CameraPicker: UIViewControllerRepresentable {
     }
 }
 #endif
-
-/// ImageIO decoding: reads HEIC/PNG/JPEG alike, applies EXIF orientation and never decodes the
-/// full-size bitmap, which keeps a 48 MP photo from spiking memory.
-enum ImageFile {
-    static func cgImage(_ data: Data, maxPixel: Int) -> CGImage? {
-        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                                     kCGImageSourceCreateThumbnailWithTransform: true,
-                                     kCGImageSourceThumbnailMaxPixelSize: maxPixel]
-        return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
-    }
-
-    /// About 2048 px on the long edge, as JPEG: plenty for vision models and a few hundred KB to upload.
-    static func jpeg(_ data: Data, maxPixel: Int = 2048) async -> Data? {
-        await Task.detached {
-            guard let image = cgImage(data, maxPixel: maxPixel) else { return nil }
-            let out = NSMutableData()
-            guard let dest = CGImageDestinationCreateWithData(out, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
-            CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
-            return CGImageDestinationFinalize(dest) ? out as Data : nil
-        }.value
-    }
-}
 
 // MARK: - Composer chips
 

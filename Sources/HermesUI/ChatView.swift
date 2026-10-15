@@ -186,7 +186,8 @@ struct ChatView: View {
                                  placeholder: editing == nil && store.queueEditing == nil ? "Message \(botName)" : "Edit message",
                                  running: store.running, enabled: store.gateway.status == .online,
                                  hasAttachments: !store.attachments.isEmpty, attaching: store.attachmentsPending,
-                                 button: sendButton, steer: SteerAction(run: steer(redirect:))) {
+                                 button: sendButton, steer: SteerAction(run: steer(redirect:)),
+                                 pasteImages: { images in Task { await store.attachPasted(images) } }) {
                             let text = draft
                             if let id = store.queueEditing {
                                 store.editQueued(id, text: text)
@@ -525,6 +526,8 @@ struct Composer: View {
     var button: SendButton?
     /// Offered on a long press while `button` can steer.
     var steer: SteerAction?
+    /// Called with the images Paste found on the pasteboard; rooms have no attachments and leave it nil.
+    var pasteImages: (([Data]) -> Void)?
     let send: () -> Void
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -534,6 +537,7 @@ struct Composer: View {
             TextField(placeholder, text: $draft, axis: .vertical)
                 .lineLimit(1...(compact ? 3 : 8))
                 .focused(focused)
+                .pastesImages(pasteImages)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(focused.wrappedValue ? Theme.primary : Theme.border))
