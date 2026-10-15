@@ -152,6 +152,13 @@ struct TimelineTests {
         #expect(ScrollFollow.next(false, .disclosed(atEnd: true, dragging: false)))
     }
 
+    @Test func dragsOnABlankTranscriptDontCount() {
+        #expect(!ScrollFollow.countsDrag(loading: true, rows: 0), "a chat still loading")
+        #expect(!ScrollFollow.countsDrag(loading: true, rows: 12), "a reload over the old rows")
+        #expect(!ScrollFollow.countsDrag(loading: false, rows: 0))
+        #expect(ScrollFollow.countsDrag(loading: false, rows: 12))
+    }
+
     @Test func draftsPerChat() {
         let defaults = UserDefaults(suiteName: "drafts-test")!
         defaults.removePersistentDomain(forName: "drafts-test")
