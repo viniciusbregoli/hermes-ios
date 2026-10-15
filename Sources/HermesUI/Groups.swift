@@ -379,7 +379,8 @@ struct RoomView: View {
                         renaming = true
                     }
                     Section("Members") {
-                        ForEach(store.room.members) { m in Text("\(bots.label(m))  @\(m.handle)") }
+                        // Two lines for every member; one string wrapped wherever the menu's width happened to cut it.
+                        ForEach(store.room.members) { m in Text("\(bots.label(m))\n@\(m.handle)") }
                     }
                     Button("Disband", systemImage: "trash", role: .destructive) { confirmDisband = true }
                 } label: {
