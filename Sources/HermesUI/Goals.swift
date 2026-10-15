@@ -75,6 +75,7 @@ struct GoalCard: View {
                 subgoal = ""
                 act("subgoal.add", text: text)
             }
+            .keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) { subgoal = "" }
         }
         .confirmationDialog("Clear this goal?", isPresented: $confirmClear, titleVisibility: .visible) {
@@ -98,6 +99,7 @@ struct LoopCard: View {
     let store: ChatStore
     let loop: SessionControl.Loop
     @State private var open = false
+    @State private var confirmStop = false
 
     var body: some View {
         ControlCard(icon: "repeat", tint: loop.status == .active ? Theme.success : Theme.muted, title: loop.prompt,
@@ -108,7 +110,7 @@ struct LoopCard: View {
             case .done: EmptyView()
             }
             if loop.status != .done {
-                ControlButton("Stop", icon: "stop.fill") { act("loop.stop") }
+                ControlButton("Stop", icon: "stop.fill") { confirmStop = true }
             }
         } details: {
             if let reason = loop.pausedReason {
@@ -120,6 +122,11 @@ struct LoopCard: View {
             if let due = loop.nextDueAt, loop.status == .active {
                 Text("Next run \(due, style: .relative)").font(.caption).foregroundStyle(Theme.muted)
             }
+        }
+        .confirmationDialog("Stop this loop?", isPresented: $confirmStop, titleVisibility: .visible) {
+            Button("Stop loop", role: .destructive) { act("loop.stop") }
+        } message: {
+            Text("It ends and won't run again.")
         }
     }
 
