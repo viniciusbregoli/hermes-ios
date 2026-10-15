@@ -240,12 +240,48 @@ struct QuoteTests {
         store.running = true
         await store.send("follow up", quotes: [Quote(text: "q", comment: "c"), Quote(text: " ")])
         #expect(store.queue.count == 1 && store.queue[0].quotes == [Quote(text: "q", comment: "c")])
-        #expect(!store.queue[0].editable)
+        #expect(store.queue[0].editable && !store.queue[0].steerable)
         #expect(store.queuedBubbles.last?.quotes.map(\.text) == ["q"])
         await store.send("", quotes: [Quote(text: "only quote")])
         #expect(store.queue.count == 2)
         await store.send("   ", quotes: [Quote(text: " ")])
         #expect(store.queue.count == 2)
+    }
+
+    @MainActor @Test func aQueuedMessageEditsItsTextAndQuotes() async {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        store.running = true
+        await store.send("follow up", quotes: [Quote(text: "one"), Quote(text: "two")])
+        let id = store.queue[0].id
+        store.editQueued(id, text: " reworded ", quotes: [Quote(text: "two", comment: "why?")])
+        #expect(store.queue[0].text == "reworded" && store.queue[0].quotes == [Quote(text: "two", comment: "why?")])
+        // Without `quotes` the message keeps its own.
+        store.editQueued(id, text: "again")
+        #expect(store.queue[0].quotes.count == 1)
+        // Quotes alone keep it; with neither it goes.
+        store.editQueued(id, text: "")
+        #expect(store.queue.count == 1 && store.queue[0].text.isEmpty)
+        store.editQueued(id, text: "", quotes: [])
+        #expect(store.queue.isEmpty)
+    }
+
+    @MainActor @Test func aQueuedMessageWithQuotesIsNotSteered() async {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        store.running = true
+        await store.send("follow up", quotes: [Quote(text: "one")])
+        await store.steerQueued(store.queue[0].id)
+        #expect(store.queue.count == 1)
+    }
+
+    @Test func sendButtonTakesQuotesWithNoTypedText() {
+        func button(_ draft: String, running: Bool = false, editingQueued: Bool = false, quotes: Bool = true) -> SendButton {
+            SendButton(draft: draft, running: running, online: true, hasAttachments: false, attaching: false, editingQueued: editingQueued, hasQuotes: quotes)
+        }
+        #expect(button("").enabled && !button("", quotes: false).enabled)
+        #expect(button("", editingQueued: true).enabled)
+        // A steer delivers plain text, so quotes keep it a queued message.
+        #expect(button("hi", running: true).enabled && !button("hi", running: true).canSteer)
+        #expect(button("hi", running: true, quotes: false).canSteer)
     }
 
     // MARK: Pending quotes
@@ -266,6 +302,29 @@ struct QuoteTests {
         store.removeQuote(at: 0)
         #expect(store.pendingQuotes.map(\.text) == ["two"])
         #expect(store.takeQuotes().map(\.text) == ["two"] && store.pendingQuotes.isEmpty && store.takeQuotes().isEmpty)
+    }
+
+    @MainActor @Test func aChipKeepsItsIdentityWhileItsCommentChangesAndNeighboursGo() {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        store.addQuote(Quote(text: "one"))
+        store.addQuote(Quote(text: "two"))
+        let two = store.pendingQuotes[1].id
+        store.setComment("why?", forQuote: two)
+        store.removeQuote(at: 0)
+        #expect(store.pendingQuotes.map(\.id) == [two] && store.pendingQuotes[0].comment == "why?")
+        store.setComment(String(repeating: "c", count: Quote.maxComment + 5), forQuote: two)
+        #expect(store.pendingQuotes[0].comment.count == Quote.maxComment)
+        store.setComment("ignored", forQuote: UUID())
+        #expect(Quote(text: "a") == Quote(text: "a") && Quote(text: "a").id != Quote(text: "a").id)
+    }
+
+    @MainActor @Test func replacingQuotesSwapsTheComposerContents() {
+        let store = ChatStore(gateway: Gateway(credentials: nil))
+        store.addQuote(Quote(text: "typed"))
+        store.replaceQuotes((1...9).map { Quote(text: "q\($0)") })
+        #expect(store.pendingQuotes.map(\.text) == (1...Quote.maxCount).map { "q\($0)" })
+        store.replaceQuotes([])
+        #expect(store.pendingQuotes.isEmpty)
     }
 
     @MainActor @Test func aMessageTakesAtMostSixPendingQuotes() {

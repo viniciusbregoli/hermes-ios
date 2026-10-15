@@ -94,7 +94,13 @@ struct QueueSheet: View {
     private func row(_ m: QueuedMessage, at i: Int) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text("\(i + 1)").monospacedDigit().foregroundStyle(Theme.muted)
-            Text(m.shown).lineLimit(4).frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(m.quotes) { quote in
+                    Label(quote.preview, systemImage: "text.quote").font(.footnote).foregroundStyle(Theme.muted).lineLimit(1)
+                }
+                if !m.shown.isEmpty { Text(m.shown).lineLimit(4) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Menu { actions(m, at: i) } label: {
                 Image(systemName: "ellipsis").foregroundStyle(Theme.muted).frame(width: 28, height: 24)
             }
@@ -126,7 +132,7 @@ struct QueueSheet: View {
         Button("Remove", systemImage: "trash", role: .destructive) { store.removeQueued(m.id) }
     }
 
-    private func canSteer(_ m: QueuedMessage) -> Bool { store.running && m.editable }
+    private func canSteer(_ m: QueuedMessage) -> Bool { store.running && m.steerable }
 
     /// Closes the sheet so the steer's outcome shows over the composer.
     private func steer(_ m: QueuedMessage, redirect: Bool) {

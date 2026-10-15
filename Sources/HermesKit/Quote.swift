@@ -13,13 +13,16 @@ import Foundation
 ///     Comment on the quote: why is that?
 ///
 /// `q` counts the `> ` lines and `c` the comment lines, so parsing never depends on what the quoted text says.
-public struct Quote: Hashable, Sendable {
+public struct Quote: Hashable, Identifiable, Sendable {
     public static let maxText = 4_000
     public static let maxComment = 2_000
     public static let maxCount = 6
     /// Characters of the reply kept on each side of the quote, to find it again.
     public static let contextLength = 24
 
+    /// Keeps a chip the same chip while its comment is edited or another one is removed. Quotes with the same
+    /// words are equal whatever their ids.
+    public let id = UUID()
     public var text: String
     public var comment: String
     /// What came right before and after the quote in the reply's plain text.
@@ -31,6 +34,17 @@ public struct Quote: Hashable, Sendable {
         self.comment = comment
         self.prefix = prefix
         self.suffix = suffix
+    }
+
+    public static func == (a: Quote, b: Quote) -> Bool {
+        a.text == b.text && a.comment == b.comment && a.prefix == b.prefix && a.suffix == b.suffix
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(text)
+        hasher.combine(comment)
+        hasher.combine(prefix)
+        hasher.combine(suffix)
     }
 
     /// The quote for `range` of `source` (a reply's plain text), with its surrounding context. Text beyond
@@ -213,6 +227,17 @@ extension ChatStore {
         guard pendingQuotes.count < Quote.maxCount else { alert = "A message can quote up to \(Quote.maxCount) passages."; return }
         guard let quote = Quote(in: plain, range: range) else { return }
         addQuote(quote)
+    }
+
+    /// Puts `quotes` in the composer in place of the pending ones, as when a message is opened for editing.
+    public func replaceQuotes(_ quotes: [Quote]) {
+        pendingQuotes = Array(quotes.prefix(Quote.maxCount))
+    }
+
+    /// Sets the comment of a pending quote, cut to `Quote.maxComment`.
+    public func setComment(_ comment: String, forQuote id: Quote.ID) {
+        guard let i = pendingQuotes.firstIndex(where: { $0.id == id }) else { return }
+        pendingQuotes[i].comment = String(comment.prefix(Quote.maxComment))
     }
 
     public func removeQuote(at index: Int) {

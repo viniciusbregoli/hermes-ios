@@ -3,27 +3,114 @@ import HermesKit
 
 // MARK: - Pending quotes
 
-/// Above the composer: one line per quote waiting for the next message, with a button to drop it.
+/// Above the composer: a chip per quote waiting for the next message, scrolling sideways when there are many.
+/// A chip opens its comment editor; the x beside it drops the quote.
 struct QuoteBar: View {
     let store: ChatStore
+    @State private var editing: Quote?
 
     var body: some View {
-        ForEach(Array(store.pendingQuotes.enumerated()), id: \.offset) { i, quote in
-            HStack(spacing: 8) {
-                Image(systemName: "text.quote").foregroundStyle(Theme.primary)
-                Text("Quoting: \(quote.preview)")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.muted)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Button { store.removeQuote(at: i) } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted).tapTarget()
+        // The sheet hangs off a view that is always there, so removing the last chip from the editor can close it cleanly.
+        Group {
+            if !store.pendingQuotes.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(store.pendingQuotes) { quote in chip(quote) }
+                    }
+                    .padding(.horizontal, 14)
                 }
-                .accessibilityLabel("Remove quote")
             }
-            .padding(.leading, 14)
-            .padding(.trailing, 4)
         }
+        .sheet(item: $editing) { quote in QuoteEditor(store: store, id: quote.id).chatTextSize() }
+    }
+
+    private func chip(_ quote: Quote) -> some View {
+        HStack(spacing: 0) {
+            Button { editing = quote } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    Label(quote.preview, systemImage: "text.quote").lineLimit(1)
+                    if !quote.comment.isEmpty {
+                        Text(quote.comment).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                    }
+                }
+                .font(.footnote)
+                .frame(maxWidth: 240, minHeight: 44, alignment: .leading)
+                .padding(.leading, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Quote: \(quote.preview)")
+            .accessibilityValue(quote.comment.isEmpty ? "No comment" : "Comment: \(quote.comment)")
+            .accessibilityHint("Edit the comment")
+            Button { remove(quote) } label: {
+                Image(systemName: "xmark").font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted).tapTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove quote")
+        }
+        .background(Theme.sidebar, in: Capsule())
+        .overlay(Capsule().stroke(Theme.border))
+    }
+
+    private func remove(_ quote: Quote) {
+        if let i = store.pendingQuotes.firstIndex(where: { $0.id == quote.id }) { store.removeQuote(at: i) }
+    }
+}
+
+/// The whole quote and a field for the comment that goes with it. The comment is saved as it is typed.
+struct QuoteEditor: View {
+    let store: ChatStore
+    let id: Quote.ID
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+
+    private var quote: Quote? { store.pendingQuotes.first { $0.id == id } }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(quote?.text ?? "")
+                        .font(.callout)
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .overlay(alignment: .leading) { Rectangle().fill(Theme.primary).frame(width: 3) }
+                        .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
+                        .textSelection(.enabled)
+                    TextField("Add a comment for the agent", text: Binding(
+                        get: { quote?.comment ?? "" }, set: { store.setComment($0, forQuote: id) }), axis: .vertical)
+                        .lineLimit(2...8)
+                        .focused($focused)
+                        .padding(12)
+                        .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.radius))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.border))
+                    Button(role: .destructive) { remove() } label: {
+                        Label("Remove quote", systemImage: "trash").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .foregroundStyle(Theme.destructive)
+                }
+                .padding(16)
+            }
+            .background(Theme.background)
+            .navigationTitle("Quote")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.keyboardShortcut(.return, modifiers: .command)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .onAppear { focused = true }
+        .onChange(of: quote == nil) { _, gone in if gone { dismiss() } }
+    }
+
+    private func remove() {
+        if let i = store.pendingQuotes.firstIndex(where: { $0.id == id }) { store.removeQuote(at: i) }
+        dismiss()
     }
 }
 
@@ -31,25 +118,37 @@ struct QuoteBar: View {
 
 #if os(iOS)
 /// A reply as one selectable text view, so a selection can cross paragraphs, lists and code. Its text is
-/// the reply's plain text, which is also what a quote's offsets and context are taken from.
+/// the reply's plain text, which is also what a quote's offsets and context are taken from. It stays open
+/// after each quote, so several passages can be picked before closing.
 struct QuoteSheet: View {
     let text: String
-    let quote: (NSRange) -> Void
+    let store: ChatStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var selection = NSRange(location: 0, length: 0)
+    /// Bumped after a quote so the text view drops its selection.
+    @State private var cleared = 0
 
-    private var canQuote: Bool { selection.length > 0 && selection.length <= Quote.maxText }
+    private var canQuote: Bool { selection.length > 0 && selection.length <= Quote.maxText && store.pendingQuotes.count < Quote.maxCount }
+
+    private var hint: String {
+        if selection.length > Quote.maxText { return "That is more than \(Quote.maxText) characters; select less to quote it." }
+        let count = store.pendingQuotes.count
+        if count >= Quote.maxCount { return "\(count) of \(Quote.maxCount) quoted. A message can quote up to \(Quote.maxCount) passages." }
+        return count == 0 ? "Select text, then tap Quote." : "\(count) of \(Quote.maxCount) quoted. Select more, or tap Done."
+    }
+
+    private func quote(_ range: NSRange) {
+        store.quote(MarkdownView.plainText(text), range: range)
+        cleared += 1
+    }
 
     var body: some View {
         NavigationStack {
-            SelectableText(text: text, typeSize: typeSize, selection: $selection) { range in
-                quote(range)
-                dismiss()
-            }
+            SelectableText(text: text, typeSize: typeSize, selection: $selection, cleared: cleared, quote: quote)
             .background(Theme.background)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Text(selection.length > Quote.maxText ? "That is more than \(Quote.maxText) characters; select less to quote it." : "Select text, then tap Quote.")
+                Text(hint)
                     .font(.footnote)
                     .foregroundStyle(Theme.muted)
                     .frame(maxWidth: .infinity)
@@ -59,9 +158,9 @@ struct QuoteSheet: View {
             .navigationTitle("Select text to quote")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() }.keyboardShortcut(.cancelAction) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Quote") { quote(selection); dismiss() }
+                    Button("Quote") { quote(selection) }
                         .keyboardShortcut(.return, modifiers: .command)
                         .toolbarEnabled(canQuote)
                 }
@@ -74,6 +173,7 @@ private struct SelectableText: UIViewRepresentable {
     let text: String
     let typeSize: DynamicTypeSize
     @Binding var selection: NSRange
+    let cleared: Int
     let quote: (NSRange) -> Void
 
     func makeUIView(context: Context) -> UITextView {
@@ -90,6 +190,10 @@ private struct SelectableText: UIViewRepresentable {
 
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
+        if context.coordinator.cleared != cleared {
+            context.coordinator.cleared = cleared
+            view.selectedRange = NSRange(location: view.selectedRange.upperBound, length: 0)
+        }
         // Setting the text again drops the selection, and every selection change re-runs this.
         let key = "\(typeSize)|\(Theme.palette.id)|\(text)"
         guard context.coordinator.shown != key else { return }
@@ -143,6 +247,7 @@ private struct SelectableText: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: SelectableText
         var shown = ""
+        var cleared = 0
         init(_ parent: SelectableText) { self.parent = parent }
 
         func textViewDidChangeSelection(_ textView: UITextView) {

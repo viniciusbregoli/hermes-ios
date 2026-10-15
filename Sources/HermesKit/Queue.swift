@@ -17,8 +17,9 @@ public struct QueuedMessage: Identifiable, Hashable, Sendable {
     public var display: String?
 
     public var shown: String { display ?? text }
-    /// A message with quotes is not edited or steered until the composer can hold its quotes.
-    public var editable: Bool { display == nil && quotes.isEmpty }
+    public var editable: Bool { display == nil }
+    /// A steer delivers plain text, so a message with quotes is edited or sent with the queue but not steered.
+    public var steerable: Bool { editable && quotes.isEmpty }
 }
 
 /// What the composer's send button does, after T3 Code's composerSendPresentation.ts.
@@ -32,12 +33,13 @@ public struct SendButton: Equatable, Sendable {
     /// - Parameters:
     ///   - editingQueued: the composer holds a queued message being edited.
     ///   - editingSent: the composer holds a sent message being edited; its rewind stops the turn itself.
+    ///   - hasQuotes: passages are quoted for this message, which can go out with no typed text but not as a steer.
     public init(draft: String, running: Bool, online: Bool, hasAttachments: Bool, attaching: Bool,
-                editingQueued: Bool = false, editingSent: Bool = false) {
+                editingQueued: Bool = false, editingSent: Bool = false, hasQuotes: Bool = false) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         action = editingQueued ? .update : running && !editingSent ? .queue : .send
-        enabled = online && !attaching && (!text.isEmpty || (hasAttachments && !editingQueued))
-        canSteer = action == .queue && enabled && !hasAttachments && !text.isEmpty && SlashCommand(text) == nil
+        enabled = online && !attaching && (!text.isEmpty || hasQuotes || (hasAttachments && !editingQueued))
+        canSteer = action == .queue && enabled && !hasAttachments && !hasQuotes && !text.isEmpty && SlashCommand(text) == nil
     }
 
     public var icon: String {
@@ -67,10 +69,12 @@ extension ChatStore {
 
     // MARK: - Editing
 
-    public func editQueued(_ id: String, text: String) {
+    /// Replaces a queued message's text and, when `quotes` is given, its quotes. A message left with neither is dropped.
+    public func editQueued(_ id: String, text: String, quotes: [Quote]? = nil) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let i = queue.firstIndex(where: { $0.id == id }), queue[i].editable else { return }
-        if text.isEmpty { queue.remove(at: i) } else { queue[i].text = text }
+        if let quotes { queue[i].quotes = Array(quotes.compactMap(\.normalized).prefix(Quote.maxCount)) }
+        if text.isEmpty, queue[i].quotes.isEmpty { queue.remove(at: i) } else { queue[i].text = text }
     }
 
     /// Moves a queued message `by` places (negative is earlier), clamped to the queue.
@@ -114,7 +118,7 @@ extension ChatStore {
 
     /// Steers with a queued message, taking it out of the queue unless the turn refuses it.
     public func steerQueued(_ id: String, redirect: Bool = false) async {
-        guard let i = queue.firstIndex(where: { $0.id == id }), queue[i].editable else { return }
+        guard let i = queue.firstIndex(where: { $0.id == id }), queue[i].steerable else { return }
         let entry = queue.remove(at: i)
         await steer(entry.text, redirect: redirect, at: i)
     }
