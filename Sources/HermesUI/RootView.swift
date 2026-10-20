@@ -46,6 +46,10 @@ public struct RootView: View {
                     MainView(store: chatsStore, bots: bots, profile: $chatsProfile, showSettings: $showSettings, jump: $jump)
                         // A profile switch starts fresh (desktop selectProfile): no chat selected, no search.
                         .id(chatsProfile)
+                        // A profile that left the roster (deleted or hidden) falls back to the default one.
+                        .onChange(of: bots.bots.map(\.name), initial: true) { _, names in
+                            if bots.loaded, !names.contains(chatsProfile) { chatsProfile = Bot.defaultName }
+                        }
                         .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                         .tag(0)
                     BotsView(bots: bots, showSettings: $showSettings, path: $botPath)
@@ -95,10 +99,8 @@ public struct RootView: View {
     private var turnRunning: Bool { store.running || !bots.thinking.isEmpty }
 
     /// Another profile's chats live in its bot's store, so Activity, notifications and the Bots tab already follow them.
-    /// A profile that left the roster falls back to the default one.
     private var chatsStore: ChatStore {
-        guard chatsProfile != Bot.defaultName, !bots.loaded || bots.bot(named: chatsProfile) != nil else { return store }
-        return bots.chat(for: chatsProfile)
+        chatsProfile == Bot.defaultName ? store : bots.chat(for: chatsProfile)
     }
 
     private func open(_ target: ActivityItem.Target) {
