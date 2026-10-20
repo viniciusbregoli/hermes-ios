@@ -18,6 +18,8 @@ struct ScreenTests {
         let url = ScreenStore.socketURL(base: URL(string: "https://h.ts.net:8447")!, path: "/api/display/ws", ticket: "t k")
         #expect(url.absoluteString == "wss://h.ts.net:8447/api/display/ws?display_ticket=t%20k")
         #expect(ScreenStore.socketURL(base: URL(string: "http://127.0.0.1:9119")!, path: "/p", ticket: "t").scheme == "ws")
+        #expect(ScreenStore.socketURL(base: URL(string: "https://h/hermes")!, path: "/api/display/ws", ticket: "t").path
+                == "/hermes/api/display/ws")
     }
 
     @Test func viewerHashIsTheFirst12HexOfSha256() {
@@ -44,6 +46,12 @@ struct ScreenTests {
         #expect(store.iHold && !store.otherHolds)
         await store.handBack()
         #expect(seen[2].1["viewer_id"] == "abc" && !store.iHold)
+    }
+
+    @Test func takeOverWithoutAViewerSaysSo() async {
+        let store = ScreenStore(gateway: gateway, profile: nil)
+        await store.takeOver()
+        #expect(store.error != nil)
     }
 
     @Test func leaseEventsApplyOnlyToThisProfileAndNeverGoBack() async {

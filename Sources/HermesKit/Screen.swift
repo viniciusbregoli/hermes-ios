@@ -97,7 +97,10 @@ public final class ScreenStore {
     }
 
     public func takeOver() async {
-        guard let viewer else { return }
+        guard let viewer else {
+            error = "The connection to Hermes was reset. Reconnect the screen, then take over."
+            return
+        }
         await lease("display.lease.acquire", ["viewer_id": .string(viewer.id)])
     }
 
@@ -149,9 +152,9 @@ public final class ScreenStore {
     }
 
     static func socketURL(base: URL, path: String, ticket: String) -> URL {
-        var parts = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        // Keeps a path prefix on the base, as the gateway's own `/api/ws` does.
+        var parts = URLComponents(url: base.appending(path: path), resolvingAgainstBaseURL: false)!
         parts.scheme = parts.scheme == "http" ? "ws" : "wss"
-        parts.path = path
         parts.queryItems = [URLQueryItem(name: "display_ticket", value: ticket)]
         return parts.url!
     }

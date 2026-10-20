@@ -27,7 +27,8 @@ struct ScreenView: View {
             }
             .task { await store.refresh() }
             .task(id: store.status?.running == true && store.gateway.status == .online) {
-                if store.status?.running == true, store.gateway.status == .online, remote.state != .live {
+                // Also after Hermes reconnects: the viewer id minted on the old connection is gone, so the stream re-attaches.
+                if store.status?.running == true, store.gateway.status == .online {
                     await remote.connect(store)
                 }
             }
