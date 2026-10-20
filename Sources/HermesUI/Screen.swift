@@ -148,10 +148,8 @@ struct ScreenCard: View {
 
     var body: some View {
         if let summary = store.summary {
-            Section {
-                NavigationLink { ScreenView(gateway: store.gateway, profile: store.profile) } label: { card(summary) }
-            }
-            .listRowBackground(Theme.sidebar)
+            NavigationLink { ScreenView(gateway: store.gateway, profile: store.profile) } label: { card(summary) }
+                .listRowBackground(Theme.sidebar)
         }
     }
 
