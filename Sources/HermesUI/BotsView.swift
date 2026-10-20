@@ -169,6 +169,13 @@ struct BotChatScreen: View {
                 }
             }
             .toolbar {
+                #if os(iOS)
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink { ScreenView(gateway: bots.gateway, profile: name) } label: { Image(systemName: "display") }
+                        .accessibilityLabel("Screen")
+                        .help("\(bot?.label ?? name)'s screen")
+                }
+                #endif
                 ToolbarItem(placement: .primaryAction) {
                     Button { showChats = true } label: { Image(systemName: "list.bullet") }
                         .keyboardShortcut("l", modifiers: .command)

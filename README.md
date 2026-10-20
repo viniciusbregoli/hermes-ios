@@ -11,6 +11,7 @@ It's a personal project: it isn't on the App Store, and it's installed from Xcod
 - **Chats**: streaming replies with a calm timeline in the style of T3 Code (grouped tool calls, "Worked for…" folds, a floating Working capsule with Stop), full markdown with tables, callouts and code blocks, images and files the agent sends (`MEDIA:` tags), and per-chat drafts.
 - **Composer**: photo, camera and file attachments, slash commands with autocomplete (skills, `/btw`, `/bg`, `/compress`, `/goal` and more), effort and Fast controls, approvals/YOLO per chat or for all chats, a queue with steer and redirect while a turn runs.
 - **Bots**: every Hermes profile with its avatar, each bot's permanent Bot Chat, @mentions, bot-to-bot messages, bot settings (photo, description, personality, model, skills and toolsets).
+- **Bot Screen**: the bot's own desktop on the gateway host, streamed live (the desktop button in a bot's chat). Take over to sign in, pass a 2FA prompt or a CAPTCHA, typing with the keyboard or from the clipboard, then hand back. Needs a Linux gateway with Bot Screen installed.
 - **Group chats**: rooms of 2 to 6 bots hosted by the gateway, so they keep going while the phone is locked.
 - **Activity**: one tab for what needs you (approvals, questions, failed room replies, answered inline), what is working (swipe to Stop), background commands with their output (swipe to Kill) and finished turns, across chats, bots and groups. The tab badge counts what needs you.
 - **Subagents**: a live tree per chat with a model badge for each subagent, its output, Steer and Stop, plus a Delegate action with Light / Standard / Heavy tiers (see the server plugin below).
@@ -55,6 +56,7 @@ With a free Apple account the app has to be reinstalled every 7 days.
 |---|---|
 | `Sources/HermesKit` | Gateway protocol (JSON-RPC over `/api/ws`, REST with bearer auth), sign-in, and the app state for chats, bots, groups, subagents and routines. No SwiftUI, so it builds and tests on macOS. |
 | `Sources/HermesUI` | The SwiftUI screens and themes. |
+| `scripts/screen` | The Bot Screen viewer script and the build that bundles it with noVNC into `Sources/HermesUI/Resources/screen.js`. |
 | `App`, `project.yml` | The iOS app target (generated with XcodeGen) and its icon. |
 | `Sources/hermes-probe` | A command-line client for checking a gateway from the Mac: `call <method> '<json>'`, `rest <METHOD> <path>`, `attach <file> "<prompt>"`. |
 | `Tests/HermesKitTests` | Unit tests (Swift Testing). |
