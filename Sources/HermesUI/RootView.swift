@@ -254,6 +254,13 @@ struct MainView: View {
             }
             .navigationTitle(store.profile.flatMap { bots.bot(named: $0)?.label } ?? "Hermes")
             .toolbar {
+                #if os(iOS)
+                // The screen of the profile picked on the rail, the same one its bot's chat opens.
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink { ScreenView(gateway: store.gateway, profile: profile) } label: { Image(systemName: "display") }
+                        .accessibilityLabel("Screen")
+                }
+                #endif
                 ToolbarItem(placement: .primaryAction) {
                     Button { newChat() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("New chat")
