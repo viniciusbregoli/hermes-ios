@@ -21,7 +21,8 @@ public struct Bot: Identifiable, Hashable, Sendable {
     public var lastActive: Date?
     public var workerActive: Date?
 
-    public var isDefault: Bool { name == "default" }
+    public static let defaultName = "default"
+    public var isDefault: Bool { name == Self.defaultName }
     public var label: String { title.nonEmpty ?? displayName.nonEmpty ?? (isDefault ? "Hermes" : name) }
     public var handle: String { isDefault ? "hermes" : name }
 
@@ -54,6 +55,13 @@ public struct Bot: Identifiable, Hashable, Sendable {
         self.title = title
         self.pinned = pinned
         self.lastActive = lastActive
+    }
+
+    /// The profile `step` places away from `name` in the roster, wrapping around (desktop profile.next / profile.prev).
+    public static func cycle(_ roster: [Bot], from name: String, by step: Int) -> String? {
+        guard !roster.isEmpty else { return nil }
+        let at = roster.firstIndex { $0.name == name } ?? 0
+        return roster[((at + step) % roster.count + roster.count) % roster.count].name
     }
 
     /// Hermes first, then pinned bots, then the most recently active; hidden bots are left out.

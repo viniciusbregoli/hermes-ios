@@ -50,6 +50,16 @@ struct RosterTests {
         #expect(bots[2].working(at: Date(timeIntervalSince1970: 1100)))
         #expect(!bots[2].working(at: Date(timeIntervalSince1970: 1200)))
     }
+
+    @Test func cyclesThroughTheRosterBothWays() {
+        let bots = Bot.roster(Self.result)
+        #expect(Bot.cycle(bots, from: "default", by: 1) == "bills")
+        #expect(Bot.cycle(bots, from: "scratch", by: 1) == "default")
+        #expect(Bot.cycle(bots, from: "default", by: -1) == "scratch")
+        // A profile that left the roster steps from the default one.
+        #expect(Bot.cycle(bots, from: "gone", by: 1) == "bills")
+        #expect(Bot.cycle([], from: "default", by: 1) == nil)
+    }
 }
 
 @MainActor
