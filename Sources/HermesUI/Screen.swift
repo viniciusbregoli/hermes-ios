@@ -160,6 +160,7 @@ struct ScreenCard: View {
         case .other: ("eye", .orange, "Live · someone else is in control")
         case .off: ("stop.circle", .gray, "Off · tap to start it")
         case .missing: ("shippingbox", .gray, "Not installed on the host")
+        case .failed: ("exclamationmark.triangle", .gray, "Couldn't check · tap to try again")
         }
         return HStack(spacing: 12) {
             Image(systemName: icon)

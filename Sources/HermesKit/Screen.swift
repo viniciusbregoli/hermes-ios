@@ -71,11 +71,14 @@ public final class ScreenStore {
     /// A human holds control from another viewer (or from this app before a reconnect).
     public var otherHolds: Bool { lease?.human == true && !iHold }
 
-    public enum Summary: Equatable { case live, mine, other, off, missing }
+    public enum Summary: Equatable { case live, mine, other, off, missing, failed }
 
     /// The one-line state the Chats list shows; nil while unknown or where no screen can exist.
+    /// A status that never arrived is `failed`, so a network error does not look like a host without a screen.
     public var summary: Summary? {
-        guard let status, status.supported, !unavailable else { return nil }
+        if unavailable { return nil }
+        guard let status else { return error == nil ? nil : .failed }
+        guard status.supported else { return nil }
         if !status.installed { return .missing }
         if !status.running { return .off }
         return iHold ? .mine : otherHolds ? .other : .live
