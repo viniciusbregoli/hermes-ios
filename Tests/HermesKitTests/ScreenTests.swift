@@ -91,6 +91,13 @@ struct ScreenTests {
         #expect(store.summary == nil)
     }
 
+    @Test func aFailedFirstCheckStaysVisible() async {
+        gateway.stub = { _, _ in throw GatewayError.disconnected }
+        let store = ScreenStore(gateway: gateway, profile: nil)
+        await store.refresh()
+        #expect(store.summary == .failed)
+    }
+
     @Test func defaultProfileIsSentByName() async {
         var profile: JSON?
         gateway.stub = { _, params in profile = params["profile"]; return .object(Self.status()) }
