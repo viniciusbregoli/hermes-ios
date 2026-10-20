@@ -172,6 +172,7 @@ struct BotChatScreen: View {
                 #if os(iOS)
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink { ScreenView(gateway: bots.gateway, profile: name) } label: { Image(systemName: "display") }
+                        .accessibilityLabel("Screen")
                         .help("\(bot?.label ?? name)'s screen")
                 }
                 #endif
