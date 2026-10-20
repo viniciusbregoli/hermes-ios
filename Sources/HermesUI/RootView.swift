@@ -198,6 +198,7 @@ struct MainView: View {
     @State private var renaming: SessionRow?
     @State private var showArchived = false
     @State private var showArtifacts = false
+    @State private var screen: ScreenStore?
 
     static let newChat = "__new__"
 
@@ -207,6 +208,10 @@ struct MainView: View {
                 if !query.trimmingCharacters(in: .whitespaces).isEmpty {
                     SearchResults(state: search, query: query) { SearchHitRow(hit: $0).tag($0.id) }
                 } else {
+                    #if os(iOS)
+                    // Like the desktop's Screen card under a profile in its sessions list.
+                    if let screen { ScreenCard(store: screen) }
+                    #endif
                     if !store.pinnedSessions.isEmpty {
                         Section("Pinned") { rows(store.pinnedSessions) }
                     }
@@ -231,7 +236,15 @@ struct MainView: View {
             .searchable(text: $query, isPresented: $searching, prompt: "Search messages")
             #endif
             .searchFetch(store, query, into: $search)
-            .refreshable { await store.refreshSessions() }
+            .refreshable {
+                await store.refreshSessions()
+                await screen?.refresh()
+            }
+            // On the list, which is always drawn: the card's own row is empty until the status arrives.
+            .task(id: profile) {
+                screen = ScreenStore(gateway: store.gateway, profile: profile)
+                await screen?.refresh()
+            }
             .renameAlert(store, $renaming)
             .sheet(isPresented: $showArchived) { ArchivedChats(store: store) { selection = $0 } }
             .sheet(isPresented: $showArtifacts) {
@@ -254,13 +267,6 @@ struct MainView: View {
             }
             .navigationTitle(store.profile.flatMap { bots.bot(named: $0)?.label } ?? "Hermes")
             .toolbar {
-                #if os(iOS)
-                // The screen of the profile picked on the rail, the same one its bot's chat opens.
-                ToolbarItem(placement: .primaryAction) {
-                    NavigationLink { ScreenView(gateway: store.gateway, profile: profile) } label: { Image(systemName: "display") }
-                        .accessibilityLabel("Screen")
-                }
-                #endif
                 ToolbarItem(placement: .primaryAction) {
                     Button { newChat() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("New chat")

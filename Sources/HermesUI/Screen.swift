@@ -141,6 +141,47 @@ struct ScreenView: View {
     }
 }
 
+/// The Chats list's row for the picked profile's screen: who is in control, one tap from the live view.
+/// Hidden where no screen can exist (an older Hermes, a non-Linux host).
+struct ScreenCard: View {
+    let store: ScreenStore
+
+    var body: some View {
+        if let summary = store.summary {
+            Section {
+                NavigationLink { ScreenView(gateway: store.gateway, profile: store.profile) } label: { card(summary) }
+            }
+            .listRowBackground(Theme.sidebar)
+        }
+    }
+
+    private func card(_ summary: ScreenStore.Summary) -> some View {
+        let (icon, dot, text): (String, Color, String) = switch summary {
+        case .live: ("display", Theme.success, "Live · the bot is in control")
+        case .mine: ("keyboard", Theme.destructive, "Live · you are in control")
+        case .other: ("eye", .orange, "Live · someone else is in control")
+        case .off: ("stop.circle", .gray, "Off · tap to start it")
+        case .missing: ("shippingbox", .gray, "Not installed on the host")
+        }
+        return HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(.black, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(alignment: .topTrailing) {
+                    Circle().fill(dot).frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(Theme.sidebar, lineWidth: 2))
+                        .offset(x: 3, y: -3)
+                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Screen").font(.subheadline.weight(.medium)).foregroundStyle(Theme.foreground)
+                Text(text).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// The noVNC client in a web view, plus a native key catcher for the software keyboard.
 @MainActor @Observable
 final class RemoteScreen {
