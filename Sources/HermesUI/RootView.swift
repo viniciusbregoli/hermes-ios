@@ -12,6 +12,8 @@ public struct RootView: View {
     @State private var jump: String?
     @State private var botPath: [String] = []
     @State private var roomPath: [String] = []
+    /// Whose chats the Chats tab lists, picked on its profile rail; kept across launches.
+    @AppStorage("chatsProfile") private var chatsProfile = Bot.defaultName
     @AppStorage("theme") private var themeId = Palette.nous.id
     @AppStorage("appearance") private var appearance = Appearance.system
     @AppStorage("showTouches") private var showTouches = false
@@ -41,7 +43,9 @@ public struct RootView: View {
                 LoginView(gateway: store.gateway)
             } else {
                 TabView(selection: $tab) {
-                    MainView(store: store, bots: bots, showSettings: $showSettings, jump: $jump)
+                    MainView(store: chatsStore, bots: bots, profile: $chatsProfile, showSettings: $showSettings, jump: $jump)
+                        // A profile switch starts fresh (desktop selectProfile): no chat selected, no search.
+                        .id(chatsProfile)
                         .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                         .tag(0)
                     BotsView(bots: bots, showSettings: $showSettings, path: $botPath)
@@ -73,6 +77,7 @@ public struct RootView: View {
             SettingsView(gateway: store.gateway, themeId: $themeId, appearance: $appearance) { id in
                 showSettings = false
                 tab = 0
+                chatsProfile = Bot.defaultName
                 jump = id
             }
             .id(themeId).themed(palette, appearance)
@@ -89,10 +94,18 @@ public struct RootView: View {
 
     private var turnRunning: Bool { store.running || !bots.thinking.isEmpty }
 
+    /// Another profile's chats live in its bot's store, so Activity, notifications and the Bots tab already follow them.
+    /// A profile that left the roster falls back to the default one.
+    private var chatsStore: ChatStore {
+        guard chatsProfile != Bot.defaultName, !bots.loaded || bots.bot(named: chatsProfile) != nil else { return store }
+        return bots.chat(for: chatsProfile)
+    }
+
     private func open(_ target: ActivityItem.Target) {
         switch target {
         case .chat(let id):
             tab = 0
+            chatsProfile = Bot.defaultName
             jump = id
         case .bot(let name):
             tab = 1
@@ -173,6 +186,7 @@ struct LoginView: View {
 struct MainView: View {
     @Bindable var store: ChatStore
     let bots: BotStore
+    @Binding var profile: String
     @Binding var showSettings: Bool
     @Binding var jump: String?
     @State private var selection: String?
@@ -220,9 +234,11 @@ struct MainView: View {
             .sheet(isPresented: $showArchived) { ArchivedChats(store: store) { selection = $0 } }
             .sheet(isPresented: $showArtifacts) {
                 NavigationStack {
+                    // Artifacts come from the default profile, so their chats open there.
                     ArtifactsView(gateway: store.gateway) { id in
                         showArtifacts = false
-                        selection = id
+                        profile = Bot.defaultName
+                        jump = id
                     }
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
@@ -234,7 +250,7 @@ struct MainView: View {
             .background {
                 Button("Search") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden()
             }
-            .navigationTitle("Hermes")
+            .navigationTitle(store.profile.flatMap { bots.bot(named: $0)?.label } ?? "Hermes")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { newChat() } label: { Image(systemName: "square.and.pencil") }
@@ -253,7 +269,14 @@ struct MainView: View {
                         .keyboardShortcut(",", modifiers: .command)
                 }
             }
-            .safeAreaInset(edge: .bottom) { ConnectionBanner(gateway: store.gateway) }
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 0) {
+                    ProfileRail(bots: bots, profile: $profile)
+                    ConnectionBanner(gateway: store.gateway)
+                }
+            }
+            // A profile's store is made on first pick, after the connect that loads the default one.
+            .task { if !store.sessionsLoaded { await store.refreshSessions() } }
         } detail: {
             if selection != nil {
                 ChatView(store: store, bots: bots)
@@ -263,7 +286,14 @@ struct MainView: View {
         }
         // The split view's detail appears and disappears unreliably, so the selection says what is on screen.
         .onChange(of: selection, initial: true) { store.onScreen = selection != nil }
-        .onChange(of: jump) { _, id in
+        // Leaving for another tab or profile takes the chat off screen, so its finished turn notifies.
+        .onAppear { store.onScreen = selection != nil }
+        .onDisappear {
+            store.onScreen = false
+            if let name = store.profile, bots.visibleBot == name { bots.visibleBot = nil }
+        }
+        // Initial too: a jump that switches profile lands in a new view, after the change.
+        .onChange(of: jump, initial: true) { _, id in
             guard let id else { return }
             selection = id
             jump = nil
@@ -273,6 +303,13 @@ struct MainView: View {
             let stored = id == Self.newChat ? nil : id
             if stored != nil, stored == store.selectedId, store.runtimeId != nil || store.loading { return }
             Task { await store.open(stored) }
+        }
+        // A profile's turns reach the Bots roster, notifications and background time the way its Bot Chat's do.
+        .onChange(of: store.runtimeId, initial: true) { trackBot() }
+        .onChange(of: store.running) { trackBot() }
+        .onChange(of: store.visible, initial: true) {
+            guard let name = store.profile else { return }
+            if store.visible { bots.visibleBot = name } else if bots.visibleBot == name { bots.visibleBot = nil }
         }
         // A branch opens from inside the chat; follow it so the list highlights the chat on screen.
         .onChange(of: store.selectedId) { _, id in
@@ -295,9 +332,70 @@ struct MainView: View {
         }
     }
 
+    private func trackBot() {
+        if let name = store.profile { bots.track(runtime: store.runtimeId, bot: name, running: store.running) }
+    }
+
     private func newChat() {
         if selection == Self.newChat { Task { await store.open(nil) } }
         selection = Self.newChat
+    }
+}
+
+/// The desktop's profile rail at the sidebar foot: home for the default profile, then one chip per bot.
+/// Picking one scopes the list to that profile's chats.
+struct ProfileRail: View {
+    let bots: BotStore
+    @Binding var profile: String
+
+    var body: some View {
+        if bots.bots.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(bots.bots) { chip($0) }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
+            .background(Theme.sidebar)
+            .overlay(alignment: .top) { Divider() }
+            .background {
+                Button("Default profile") { profile = Bot.defaultName }.keyboardShortcut("d", modifiers: .command).hidden()
+                Button("Next profile") { step(1) }.keyboardShortcut("]", modifiers: [.command, .shift]).hidden()
+                Button("Previous profile") { step(-1) }.keyboardShortcut("[", modifiers: [.command, .shift]).hidden()
+            }
+        }
+    }
+
+    private func chip(_ bot: Bot) -> some View {
+        let selected = bot.name == profile
+        return Button { profile = bot.name } label: {
+            Group {
+                if bot.isDefault {
+                    Image(systemName: "house")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(selected ? Theme.primary : Theme.muted)
+                        .frame(width: 32, height: 32)
+                        .background(Theme.primary.opacity(selected ? 0.15 : 0.06), in: Circle())
+                } else {
+                    BotAvatar(bot: bot, bots: bots, size: 32).opacity(selected ? 1 : 0.6)
+                }
+            }
+            .padding(3)
+            .overlay(Circle().stroke(selected ? Theme.primary : .clear, lineWidth: 2))
+            // 44 pt touch target around the 38 pt chip.
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(bot.label)
+        .accessibilityHint("Shows this profile's chats")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(bot.isDefault ? "\(bot.label) (⌘D)" : bot.label)
+    }
+
+    private func step(_ by: Int) {
+        if let next = Bot.cycle(bots.bots, from: profile, by: by) { profile = next }
     }
 }
 
