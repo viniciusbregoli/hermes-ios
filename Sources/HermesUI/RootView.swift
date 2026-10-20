@@ -350,11 +350,16 @@ struct ProfileRail: View {
     let bots: BotStore
     @Binding var profile: String
 
+    /// A default profile hidden in Bot Mode still gets its home chip, so the rail can always return to it.
+    private var profiles: [Bot] {
+        bots.bots.contains { $0.isDefault } ? bots.bots : [Bot(name: Bot.defaultName)] + bots.bots
+    }
+
     var body: some View {
-        if bots.bots.count > 1 {
+        if profiles.count > 1 {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(bots.bots) { chip($0) }
+                    ForEach(profiles) { chip($0) }
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
@@ -397,7 +402,7 @@ struct ProfileRail: View {
     }
 
     private func step(_ by: Int) {
-        if let next = Bot.cycle(bots.bots, from: profile, by: by) { profile = next }
+        if let next = Bot.cycle(profiles, from: profile, by: by) { profile = next }
     }
 }
 
