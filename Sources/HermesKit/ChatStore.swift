@@ -256,8 +256,9 @@ public final class ChatStore {
         // Re-opening the same chat (after a reconnect) keeps what's on screen until the resume lands,
         // so a failed resume doesn't blank the transcript.
         if storedId == nil || storedId != selectedId {
-            await handOffQueue()
-            await detach()
+            // The old chat is let go before the round trips that finish leaving it, so the new chat shows at once
+            // instead of the old one sitting under its title until session.close returns.
+            let handOff = takeQueue(), close = release()
             selectedId = storedId
             items = []
             requests = []
@@ -270,6 +271,7 @@ public final class ChatStore {
             rowIds = [:]
             openerAt = nil
             resetControls()
+            Task { await handOff(); await close() }
         }
         guard let storedId else { return }
         unread[storedId] = nil
@@ -811,15 +813,19 @@ public final class ChatStore {
 
     /// Frees the server-side agent for the chat we are leaving, unless it is still working.
     /// A Bot Chat stays open, like on the desktop: the bot may start a turn in it at any time.
-    private func detach() async {
-        guard let sid = runtimeId else { return }
+    private func detach() async { await release()() }
+
+    /// Takes the agent off the open chat; the returned call closes its session on the server.
+    private func release() -> () async -> Void {
+        guard let sid = runtimeId else { return {} }
         runtimeId = nil
         if !running, selectedId != canonicalId || canonicalId == nil {
-            _ = try? await gateway.call("session.close", scoped(["session_id": .string(sid)]))
-        } else {
-            // The session stays open and so do its prompts; they wait in the inbox for the chat to come back.
-            gateway.park(requests)
+            let params = scoped(["session_id": .string(sid)])
+            return { [gateway] in _ = try? await gateway.call("session.close", params) }
         }
+        // The session stays open and so do its prompts; they wait in the inbox for the chat to come back.
+        gateway.park(requests)
+        return {}
     }
 
     /// Session methods take `profile` to reach another profile's database; runtime ids are already scoped.
