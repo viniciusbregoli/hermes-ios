@@ -341,6 +341,7 @@ struct MainView: View {
             guard let id else { return }
             let stored = id == Self.newChat ? nil : id
             if stored != nil, stored == store.selectedId, store.runtimeId != nil || store.loading { return }
+            store.select(stored)
             Task { await store.open(stored) }
         }
         // A profile's turns reach the Bots roster, notifications and background time the way its Bot Chat's do.

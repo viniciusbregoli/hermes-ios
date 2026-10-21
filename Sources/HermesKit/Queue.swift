@@ -164,14 +164,17 @@ extension ChatStore {
         }
     }
 
-    /// Hands the queue to the server before leaving the chat, so a turn still running there gets its follow-ups.
+    /// Takes the queue off the chat being left; the returned call hands it to the server, so a turn still running
+    /// there gets its follow-ups.
     // ponytail: a queue paused by Stop is dropped on leaving; keep per-chat queues if that loses something wanted.
-    func handOffQueue() async {
+    func takeQueue() -> () async -> Void {
         let pending = queue
         queue = []
-        guard running, !queuePaused, let sid = runtimeId else { return }
-        for m in pending {
-            _ = try? await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(Quote.compose(m.quotes, with: m.text) + m.note), "queued": true])
+        guard running, !queuePaused, let sid = runtimeId else { return {} }
+        return { [gateway] in
+            for m in pending {
+                _ = try? await gateway.call("prompt.submit", ["session_id": .string(sid), "text": .string(Quote.compose(m.quotes, with: m.text) + m.note), "queued": true])
+            }
         }
     }
 }

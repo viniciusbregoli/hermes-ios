@@ -180,6 +180,12 @@ public final class ChatStore {
     /// When a turn ended while its chat was on screen, so a later Activity poll doesn't mark it unread.
     @ObservationIgnored var watchedEnds: [String: Date] = [:]
     @ObservationIgnored private var nextLocalId = 0
+    /// Sessions of chats just left that are still closing, by stored id. Reopening one waits for its close: a close
+    /// landing after the resume would end the reopened session.
+    @ObservationIgnored private var closing: [String: Task<Void, Never>] = [:]
+    /// Counts loads and chat switches, so a load overtaken by either (even back to the same chat, after A, B, A) leaves
+    /// their state alone.
+    @ObservationIgnored private var loadAttempt = 0
     @ObservationIgnored private let defaults: UserDefaults
     static let unreadKey = "chats.unread"
 
@@ -252,12 +258,16 @@ public final class ChatStore {
         }
     }
 
-    private func load(_ storedId: String?) async throws {
+    /// Switches to another chat right away, ahead of `open`: the chat screen is pushed before `open`'s task runs and
+    /// otherwise showed the previous chat under it until the resume landed.
+    public func select(_ storedId: String?) {
         // Re-opening the same chat (after a reconnect) keeps what's on screen until the resume lands,
         // so a failed resume doesn't blank the transcript.
         if storedId == nil || storedId != selectedId {
-            await handOffQueue()
-            await detach()
+            // The old chat is let go before the round trips that finish leaving it, so the new chat shows at once
+            // instead of the old one sitting under its title until session.close returns.
+            loadAttempt += 1
+            let left = selectedId, handOff = takeQueue(), close = release()
             selectedId = storedId
             items = []
             requests = []
@@ -270,13 +280,36 @@ public final class ChatStore {
             rowIds = [:]
             openerAt = nil
             resetControls()
+            let leaving = Task { await handOff(); await close() }
+            if let left {
+                // Leaving the chat again before an earlier close landed (it had no session yet) still waits for that close.
+                let earlier = closing[left], done = Task { await earlier?.value; await leaving.value }
+                closing[left] = done
+                Task { await done.value; if closing[left] == done { closing[left] = nil } }
+            }
         }
+        if storedId != nil { loading = true }
+    }
+
+    private func load(_ storedId: String?) async throws {
+        select(storedId)
+        loadAttempt += 1
+        let attempt = loadAttempt
         guard let storedId else { return }
         unread[storedId] = nil
         loading = true
-        defer { loading = false }
-        let snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
-        guard selectedId == storedId else { return }
+        // A load overtaken by a later one leaves that load's spinner alone.
+        defer { if attempt == loadAttempt { loading = false } }
+        await closing[storedId]?.value
+        let snap: JSON
+        do {
+            snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
+        } catch {
+            // An overtaken load's failure isn't the chat on screen's.
+            if attempt == loadAttempt { throw error }
+            return
+        }
+        guard attempt == loadAttempt else { return }
         apply(snapshot: snap)
         Task { await refreshControl() }
     }
@@ -811,15 +844,19 @@ public final class ChatStore {
 
     /// Frees the server-side agent for the chat we are leaving, unless it is still working.
     /// A Bot Chat stays open, like on the desktop: the bot may start a turn in it at any time.
-    private func detach() async {
-        guard let sid = runtimeId else { return }
+    private func detach() async { await release()() }
+
+    /// Takes the agent off the open chat; the returned call closes its session on the server.
+    private func release() -> () async -> Void {
+        guard let sid = runtimeId else { return {} }
         runtimeId = nil
         if !running, selectedId != canonicalId || canonicalId == nil {
-            _ = try? await gateway.call("session.close", scoped(["session_id": .string(sid)]))
-        } else {
-            // The session stays open and so do its prompts; they wait in the inbox for the chat to come back.
-            gateway.park(requests)
+            let params = scoped(["session_id": .string(sid)])
+            return { [gateway] in _ = try? await gateway.call("session.close", params) }
         }
+        // The session stays open and so do its prompts; they wait in the inbox for the chat to come back.
+        gateway.park(requests)
+        return {}
     }
 
     /// Session methods take `profile` to reach another profile's database; runtime ids are already scoped.

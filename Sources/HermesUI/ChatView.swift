@@ -19,6 +19,8 @@ struct ChatView: View {
     @State private var atEnd = true
     /// Bumped to scroll to the end (see EndScroller).
     @State private var endRequests = 0
+    /// Bumped when another chat opens here, so its transcript gets a fresh scroll view (see the `.id` below).
+    @State private var transcript = 0
     /// A group or fold is resizing because the user toggled it; it must not drag the view to the end.
     @State private var disclosing = false
     /// The message this view just sent; its turn starts at the top so the answer grows into view.
@@ -50,7 +52,7 @@ struct ChatView: View {
         let split = pinned.flatMap { id in rows.firstIndex { $0.id == id } } ?? rows.count
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                TranscriptStack {
                     ForEach(rows[..<split]) { row($0) }
                     if split < rows.count {
                         // At least a screen tall, so scrolling to the end puts the sent message at the top.
@@ -75,6 +77,8 @@ struct ChatView: View {
             // The floating Working capsule and queue chip would otherwise sit over the last row.
             .contentMargins(.bottom, store.running || store.queuedCount > 0 ? 52 : 0, for: .scrollContent)
             .modifier(EndScroller(requests: endRequests))
+            // Another chat loaded into the same scroll view kept the old one's offset, past the new transcript's end.
+            .id(transcript)
             .modifier(EndTracking { end in
                 if atEnd != end { atEnd = end }
                 // Lazy rows settle their heights after a jump, so a follower keeps going until it truly reaches the end.
@@ -150,6 +154,7 @@ struct ChatView: View {
                 speaker.stop()
                 // A new chat getting its id on first send is still the same conversation.
                 if old != nil {
+                    transcript += 1
                     pinned = nil
                     openTurns = []
                     openGroups = []
@@ -239,6 +244,7 @@ struct ChatView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .background(TabBarReturn())
         // Landscape with the keyboard up leaves almost no transcript, so the bar steps aside while typing.
         .toolbar(verticalSizeClass == .compact && composerFocused ? .hidden : .automatic, for: .navigationBar)
         #endif
@@ -446,6 +452,21 @@ struct ChatView: View {
 }
 
 /// Opens at the end of the transcript; on iOS 18 only initially, so new output never drags a reader along.
+/// The transcript's rows. A lazy stack opened long chats past their real end, blank until a drag: it jumps to the end
+/// from estimated row heights and on iOS 27 never corrects (developer.apple.com/forums/thread/741406). Settled turns are
+/// folded, so laying out every row is cheap. iOS 17 keeps the lazy stack, whose end marker's onAppear tracks the end.
+struct TranscriptStack<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if #available(iOS 18, macOS 15, *) {
+            VStack(alignment: .leading, spacing: 12) { content }
+        } else {
+            LazyVStack(alignment: .leading, spacing: 12) { content }
+        }
+    }
+}
+
 struct BottomAnchored: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 18, macOS 15, *) {
@@ -843,3 +864,27 @@ struct ModelMenu: View {
         model.split(separator: "/").last.map(String.init) ?? model
     }
 }
+
+#if os(iOS)
+/// Brings the tab bar back with the pop that leaves the chat. SwiftUI only shows it again once the pop has finished,
+/// seconds later on a busy phone. A cancelled swipe back hides it again.
+private struct TabBarReturn: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ vc: Controller, context: Context) {}
+
+    final class Controller: UIViewController {
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            // The chat's screen is the ancestor the navigation stack holds; a screen pushed over it doesn't count as leaving.
+            var screen: UIViewController? = self
+            while let c = screen, !(c.parent is UINavigationController) { screen = c.parent }
+            guard #available(iOS 18, *), let screen, let stack = screen.navigationController,
+                  !stack.viewControllers.contains(screen), let tabs = screen.tabBarController else { return }
+            guard let transition = screen.transitionCoordinator else { return tabs.setTabBarHidden(false, animated: false) }
+            transition.animate { _ in tabs.setTabBarHidden(false, animated: false) } completion: { context in
+                if context.isCancelled { tabs.setTabBarHidden(true, animated: false) }
+            }
+        }
+    }
+}
+#endif
