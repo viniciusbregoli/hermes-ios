@@ -183,6 +183,9 @@ public final class ChatStore {
     /// Sessions of chats just left that are still closing, by stored id. Reopening one waits for its close: a close
     /// landing after the resume would end the reopened session.
     @ObservationIgnored private var closing: [String: Task<Void, Never>] = [:]
+    /// Counts loads and chat switches, so a load overtaken by either (even back to the same chat, after A, B, A) leaves
+    /// their state alone.
+    @ObservationIgnored private var loadAttempt = 0
     @ObservationIgnored private let defaults: UserDefaults
     static let unreadKey = "chats.unread"
 
@@ -229,8 +232,7 @@ public final class ChatStore {
     }
 
     public func open(_ storedId: String?) async {
-        // A chat left before its load failed doesn't put its error over the one on screen.
-        do { try await load(storedId) } catch { if selectedId == storedId { alert = error.localizedDescription } }
+        do { try await load(storedId) } catch { alert = error.localizedDescription }
     }
 
     /// Shows a stored chat's transcript without attaching an agent to it, so nothing can be sent (a routine's run).
@@ -264,6 +266,7 @@ public final class ChatStore {
         if storedId == nil || storedId != selectedId {
             // The old chat is let go before the round trips that finish leaving it, so the new chat shows at once
             // instead of the old one sitting under its title until session.close returns.
+            loadAttempt += 1
             let left = selectedId, handOff = takeQueue(), close = release()
             selectedId = storedId
             items = []
@@ -279,8 +282,10 @@ public final class ChatStore {
             resetControls()
             let leaving = Task { await handOff(); await close() }
             if let left {
-                closing[left] = leaving
-                Task { await leaving.value; if closing[left] == leaving { closing[left] = nil } }
+                // Leaving the chat again before an earlier close landed (it had no session yet) still waits for that close.
+                let earlier = closing[left], done = Task { await earlier?.value; await leaving.value }
+                closing[left] = done
+                Task { await done.value; if closing[left] == done { closing[left] = nil } }
             }
         }
         if storedId != nil { loading = true }
@@ -288,14 +293,23 @@ public final class ChatStore {
 
     private func load(_ storedId: String?) async throws {
         select(storedId)
+        loadAttempt += 1
+        let attempt = loadAttempt
         guard let storedId else { return }
         unread[storedId] = nil
         loading = true
-        // A load overtaken by another chat's leaves that chat's spinner alone.
-        defer { if selectedId == storedId { loading = false } }
+        // A load overtaken by a later one leaves that load's spinner alone.
+        defer { if attempt == loadAttempt { loading = false } }
         await closing[storedId]?.value
-        let snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
-        guard selectedId == storedId else { return }
+        let snap: JSON
+        do {
+            snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
+        } catch {
+            // An overtaken load's failure isn't the chat on screen's.
+            if attempt == loadAttempt { throw error }
+            return
+        }
+        guard attempt == loadAttempt else { return }
         apply(snapshot: snap)
         Task { await refreshControl() }
     }
