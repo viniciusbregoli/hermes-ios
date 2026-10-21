@@ -239,6 +239,7 @@ struct ChatView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .background(TabBarReturn())
         // Landscape with the keyboard up leaves almost no transcript, so the bar steps aside while typing.
         .toolbar(verticalSizeClass == .compact && composerFocused ? .hidden : .automatic, for: .navigationBar)
         #endif
@@ -843,3 +844,27 @@ struct ModelMenu: View {
         model.split(separator: "/").last.map(String.init) ?? model
     }
 }
+
+#if os(iOS)
+/// Brings the tab bar back with the pop that leaves the chat. SwiftUI only shows it again once the pop has finished,
+/// seconds later on a busy phone. A cancelled swipe back hides it again.
+private struct TabBarReturn: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ vc: Controller, context: Context) {}
+
+    final class Controller: UIViewController {
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            // The chat's screen is the ancestor the navigation stack holds; a screen pushed over it doesn't count as leaving.
+            var screen: UIViewController? = self
+            while let c = screen, !(c.parent is UINavigationController) { screen = c.parent }
+            guard #available(iOS 18, *), let screen, let stack = screen.navigationController,
+                  !stack.viewControllers.contains(screen), let tabs = screen.tabBarController else { return }
+            guard let transition = screen.transitionCoordinator else { return tabs.setTabBarHidden(false, animated: false) }
+            transition.animate { _ in tabs.setTabBarHidden(false, animated: false) } completion: { context in
+                if context.isCancelled { tabs.setTabBarHidden(true, animated: false) }
+            }
+        }
+    }
+}
+#endif
