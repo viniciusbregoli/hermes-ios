@@ -144,6 +144,12 @@ struct InboxTests {
         #expect(gateway.inbox.map(\.id) == ["a1"])
     }
 
+    @Test func selectingAnotherChatClearsTheOldOneAtOnce() {
+        store.select("another")
+        #expect(store.selectedId == "another")
+        #expect(store.items.isEmpty && store.loading)
+    }
+
     @Test func openingAnotherChatShowsItBeforeTheOldOneCloses() async {
         var seen: [String: String?] = [:]
         gateway.stub = { [store] method, _ in
