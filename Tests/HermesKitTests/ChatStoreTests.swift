@@ -150,6 +150,42 @@ struct InboxTests {
         #expect(store.items.isEmpty && store.loading)
     }
 
+    @Test func reopeningAChatWaitsForItsCloseBeforeResuming() async {
+        var log: [String] = []
+        gateway.stub = { method, params in
+            let id = params["session_id"]?.string ?? ""
+            if method == "session.close" {
+                // A close slower than the resume that follows it.
+                for _ in 0..<20 { await Task.yield() }
+            }
+            log.append("\(method) \(id)")
+            return method == "session.resume" ? ["session_id": .string("rt-" + id), "messages": []] : nil
+        }
+        await store.open("a")
+        await store.open("b")
+        await store.open("a")
+        let closed = log.firstIndex(of: "session.close rt-a"), resumed = log.lastIndex(of: "session.resume a")
+        #expect(closed != nil && resumed != nil && closed! < resumed!)
+    }
+
+    @Test func aLoadOvertakenByAnotherChatLeavesItsStateAlone() async {
+        var release: CheckedContinuation<Void, Never>?
+        gateway.stub = { method, params in
+            if method == "session.resume", params["session_id"] == "slow" {
+                await withCheckedContinuation { release = $0 }
+                throw GatewayError.offline
+            }
+            return nil
+        }
+        let slow = Task { await store.open("slow") }
+        while release == nil { await Task.yield() }
+        store.select("other")
+        release?.resume()
+        await slow.value
+        #expect(store.loading)
+        #expect(store.alert == nil)
+    }
+
     @Test func openingAnotherChatShowsItBeforeTheOldOneCloses() async {
         var seen: [String: String?] = [:]
         gateway.stub = { [store] method, _ in
