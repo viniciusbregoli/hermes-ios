@@ -180,6 +180,9 @@ public final class ChatStore {
     /// When a turn ended while its chat was on screen, so a later Activity poll doesn't mark it unread.
     @ObservationIgnored var watchedEnds: [String: Date] = [:]
     @ObservationIgnored private var nextLocalId = 0
+    /// Sessions of chats just left that are still closing, by stored id. Reopening one waits for its close: a close
+    /// landing after the resume would end the reopened session.
+    @ObservationIgnored private var closing: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let defaults: UserDefaults
     static let unreadKey = "chats.unread"
 
@@ -226,7 +229,8 @@ public final class ChatStore {
     }
 
     public func open(_ storedId: String?) async {
-        do { try await load(storedId) } catch { alert = error.localizedDescription }
+        // A chat left before its load failed doesn't put its error over the one on screen.
+        do { try await load(storedId) } catch { if selectedId == storedId { alert = error.localizedDescription } }
     }
 
     /// Shows a stored chat's transcript without attaching an agent to it, so nothing can be sent (a routine's run).
@@ -260,7 +264,7 @@ public final class ChatStore {
         if storedId == nil || storedId != selectedId {
             // The old chat is let go before the round trips that finish leaving it, so the new chat shows at once
             // instead of the old one sitting under its title until session.close returns.
-            let handOff = takeQueue(), close = release()
+            let left = selectedId, handOff = takeQueue(), close = release()
             selectedId = storedId
             items = []
             requests = []
@@ -273,7 +277,11 @@ public final class ChatStore {
             rowIds = [:]
             openerAt = nil
             resetControls()
-            Task { await handOff(); await close() }
+            let leaving = Task { await handOff(); await close() }
+            if let left {
+                closing[left] = leaving
+                Task { await leaving.value; if closing[left] == leaving { closing[left] = nil } }
+            }
         }
         if storedId != nil { loading = true }
     }
@@ -283,7 +291,9 @@ public final class ChatStore {
         guard let storedId else { return }
         unread[storedId] = nil
         loading = true
-        defer { loading = false }
+        // A load overtaken by another chat's leaves that chat's spinner alone.
+        defer { if selectedId == storedId { loading = false } }
+        await closing[storedId]?.value
         let snap = try await gateway.call("session.resume", scoped(["session_id": .string(storedId), "inline_images": false]))
         guard selectedId == storedId else { return }
         apply(snapshot: snap)
