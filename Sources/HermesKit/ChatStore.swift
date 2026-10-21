@@ -252,7 +252,9 @@ public final class ChatStore {
         }
     }
 
-    private func load(_ storedId: String?) async throws {
+    /// Switches to another chat right away, ahead of `open`: the chat screen is pushed before `open`'s task runs and
+    /// otherwise showed the previous chat under it until the resume landed.
+    public func select(_ storedId: String?) {
         // Re-opening the same chat (after a reconnect) keeps what's on screen until the resume lands,
         // so a failed resume doesn't blank the transcript.
         if storedId == nil || storedId != selectedId {
@@ -273,6 +275,11 @@ public final class ChatStore {
             resetControls()
             Task { await handOff(); await close() }
         }
+        if storedId != nil { loading = true }
+    }
+
+    private func load(_ storedId: String?) async throws {
+        select(storedId)
         guard let storedId else { return }
         unread[storedId] = nil
         loading = true
