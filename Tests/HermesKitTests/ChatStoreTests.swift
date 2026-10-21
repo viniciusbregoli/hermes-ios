@@ -143,6 +143,18 @@ struct InboxTests {
         #expect(store.requests.isEmpty)
         #expect(gateway.inbox.map(\.id) == ["a1"])
     }
+
+    @Test func openingAnotherChatShowsItBeforeTheOldOneCloses() async {
+        var seen: [String: String?] = [:]
+        gateway.stub = { [store] method, _ in
+            seen[method] = store.selectedId
+            return method == "session.resume" ? ["session_id": "rt2", "messages": []] : nil
+        }
+        await store.open("another")
+        for _ in 0..<200 where seen["session.close"] == nil { await Task.yield() }
+        #expect(seen["session.close"] == "another")
+        #expect(seen["session.resume"] == "another")
+    }
 }
 
 @MainActor
