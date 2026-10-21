@@ -186,6 +186,46 @@ struct InboxTests {
         #expect(store.alert == nil)
     }
 
+    @Test func leavingAClosingChatAgainStillWaitsForTheFirstClose() async {
+        var log: [String] = []
+        gateway.stub = { method, params in
+            let id = params["session_id"]?.string ?? ""
+            if method == "session.close" { for _ in 0..<20 { await Task.yield() } }
+            log.append("\(method) \(id)")
+            return method == "session.resume" ? ["session_id": .string("rt-" + id), "messages": []] : nil
+        }
+        await store.open("a")
+        await store.open("b")
+        // Back on A before it loads, then off it again: this leave has no session to close.
+        store.select("a")
+        store.select("b")
+        await store.open("a")
+        let closed = log.firstIndex(of: "session.close rt-a"), resumed = log.lastIndex(of: "session.resume a")
+        #expect(closed != nil && resumed != nil && closed! < resumed!)
+    }
+
+    @Test func anEarlierLoadOfAReopenedChatLeavesTheNewOneAlone() async {
+        var release: CheckedContinuation<Void, Never>?
+        var resumes = 0
+        gateway.stub = { method, _ in
+            guard method == "session.resume" else { return nil }
+            resumes += 1
+            if resumes == 1 {
+                await withCheckedContinuation { release = $0 }
+                throw GatewayError.offline
+            }
+            return ["session_id": "rt-a2", "messages": []]
+        }
+        let first = Task { await store.open("a") }
+        while release == nil { await Task.yield() }
+        store.select("b")
+        await store.open("a")
+        release?.resume()
+        await first.value
+        #expect(store.alert == nil && !store.loading)
+        #expect(store.selectedId == "a")
+    }
+
     @Test func openingAnotherChatShowsItBeforeTheOldOneCloses() async {
         var seen: [String: String?] = [:]
         gateway.stub = { [store] method, _ in
