@@ -203,6 +203,8 @@ struct MainView: View {
     @State private var screen: ScreenStore?
     /// Every profile's chats in collapsible groups, like the desktop's Grouping > Profile; the rail hides.
     @AppStorage("chatsGrouped") private var grouped = false
+    /// Bumped by pull to refresh so every group reloads its chats and screen, not only the picked profile.
+    @State private var groupsRefresh = 0
 
     static let newChat = "__new__"
 
@@ -215,7 +217,7 @@ struct MainView: View {
                     if grouped {
                         ForEach(ProfileRail.profiles(bots)) { bot in
                             ProfileGroup(bot: bot, bots: bots, chats: bot.name == profile ? store : bot.isDefault ? home : bots.chat(for: bot.name),
-                                         current: bot.name == profile) { open($0, in: bot.name) } currentRows: { rows($0) }
+                                         current: bot.name == profile, refresh: groupsRefresh) { open($0, in: bot.name) } currentRows: { rows($0) }
                         }
                     } else {
                         #if os(iOS)
@@ -248,8 +250,12 @@ struct MainView: View {
             #endif
             .searchFetch(store, query, into: $search)
             .refreshable {
-                await store.refreshSessions()
-                await screen?.refresh()
+                if grouped {
+                    groupsRefresh += 1
+                } else {
+                    await store.refreshSessions()
+                    await screen?.refresh()
+                }
             }
             // On the list, which is always drawn: the card's own row is empty until the status arrives.
             .task(id: profile) {
@@ -452,6 +458,7 @@ struct ProfileGroup<Rows: View>: View {
     let chats: ChatStore
     /// The profile on screen: its rows are the list's own, selectable and with their swipe actions.
     let current: Bool
+    let refresh: Int
     let open: (String) -> Void
     @ViewBuilder let currentRows: ([SessionRow]) -> Rows
     /// Collapsed profile names, one per line; groups start expanded.
@@ -492,9 +499,9 @@ struct ProfileGroup<Rows: View>: View {
         } header: {
             header
                 // On the header, which is always drawn: a collapsed group has no rows to hang this on.
-                .task {
-                    if !chats.sessionsLoaded { await chats.refreshSessions() }
-                    let screen = ScreenStore(gateway: chats.gateway, profile: bot.name)
+                .task(id: refresh) {
+                    if refresh > 0 || !chats.sessionsLoaded { await chats.refreshSessions() }
+                    let screen = self.screen ?? ScreenStore(gateway: chats.gateway, profile: bot.name)
                     self.screen = screen
                     await screen.refresh()
                 }
