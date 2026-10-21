@@ -70,6 +70,34 @@ struct ScreenTests {
         #expect(store.otherHolds)
     }
 
+    @Test func summaryFollowsStatusAndLease() async {
+        var reply = Self.status()
+        gateway.stub = { _, _ in .object(reply) }
+        let store = ScreenStore(gateway: gateway, profile: "bills")
+        #expect(store.summary == nil)
+        await store.refresh()
+        #expect(store.summary == .live)
+        reply = Self.status(holder: "human", hash: "x", epoch: 2)
+        await store.refresh()
+        #expect(store.summary == .other)
+        reply = Self.status(epoch: 3, running: false)
+        await store.refresh()
+        #expect(store.summary == .off)
+        reply["installed"] = false
+        await store.refresh()
+        #expect(store.summary == .missing)
+        reply["supported"] = false
+        await store.refresh()
+        #expect(store.summary == nil)
+    }
+
+    @Test func aFailedFirstCheckStaysVisible() async {
+        gateway.stub = { _, _ in throw GatewayError.disconnected }
+        let store = ScreenStore(gateway: gateway, profile: nil)
+        await store.refresh()
+        #expect(store.summary == .failed)
+    }
+
     @Test func defaultProfileIsSentByName() async {
         var profile: JSON?
         gateway.stub = { _, params in profile = params["profile"]; return .object(Self.status()) }

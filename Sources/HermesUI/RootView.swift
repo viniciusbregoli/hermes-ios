@@ -43,7 +43,7 @@ public struct RootView: View {
                 LoginView(gateway: store.gateway)
             } else {
                 TabView(selection: $tab) {
-                    MainView(store: chatsStore, bots: bots, profile: $chatsProfile, showSettings: $showSettings, jump: $jump)
+                    MainView(store: chatsStore, home: store, bots: bots, profile: $chatsProfile, showSettings: $showSettings, jump: $jump)
                         // A profile switch starts fresh (desktop selectProfile): no chat selected, no search.
                         .id(chatsProfile)
                         // A profile that left the roster (deleted or hidden) falls back to the default one.
@@ -187,6 +187,8 @@ struct LoginView: View {
 
 struct MainView: View {
     @Bindable var store: ChatStore
+    /// The default profile's chats, for its group when the list is grouped by profile.
+    let home: ChatStore
     let bots: BotStore
     @Binding var profile: String
     @Binding var showSettings: Bool
@@ -198,6 +200,11 @@ struct MainView: View {
     @State private var renaming: SessionRow?
     @State private var showArchived = false
     @State private var showArtifacts = false
+    @State private var screen: ScreenStore?
+    /// Every profile's chats in collapsible groups, like the desktop's Grouping > Profile; the rail hides.
+    @AppStorage("chatsGrouped") private var grouped = false
+    /// Bumped by pull to refresh so every group reloads its chats and screen, not only the picked profile.
+    @State private var groupsRefresh = 0
 
     static let newChat = "__new__"
 
@@ -207,19 +214,30 @@ struct MainView: View {
                 if !query.trimmingCharacters(in: .whitespaces).isEmpty {
                     SearchResults(state: search, query: query) { SearchHitRow(hit: $0).tag($0.id) }
                 } else {
-                    if !store.pinnedSessions.isEmpty {
-                        Section("Pinned") { rows(store.pinnedSessions) }
-                    }
-                    Section {
-                        rows(store.unpinnedSessions)
-                    } header: {
-                        if !store.pinnedSessions.isEmpty { Text("Chats") }
+                    if grouped {
+                        ForEach(ProfileRail.profiles(bots)) { bot in
+                            ProfileGroup(bot: bot, bots: bots, chats: bot.name == profile ? store : bot.isDefault ? home : bots.chat(for: bot.name),
+                                         current: bot.name == profile, refresh: groupsRefresh) { open($0, in: bot.name) } currentRows: { rows($0) }
+                        }
+                    } else {
+                        #if os(iOS)
+                        // Like the desktop's Screen card under a profile in its sessions list.
+                        if let screen { Section { ScreenCard(store: screen) } }
+                        #endif
+                        if !store.pinnedSessions.isEmpty {
+                            Section("Pinned") { rows(store.pinnedSessions) }
+                        }
+                        Section {
+                            rows(store.unpinnedSessions)
+                        } header: {
+                            if !store.pinnedSessions.isEmpty { Text("Chats") }
+                        }
                     }
                     if store.sessionsLoaded { ArchivedEntry(shown: $showArchived) }
                 }
             }
             .overlay {
-                if store.sessions.isEmpty, store.sessionsLoaded, query.isEmpty {
+                if !grouped, store.sessions.isEmpty, store.sessionsLoaded, query.isEmpty {
                     ContentUnavailableView("No chats yet", systemImage: "bubble.left.and.text.bubble.right")
                 }
             }
@@ -231,7 +249,19 @@ struct MainView: View {
             .searchable(text: $query, isPresented: $searching, prompt: "Search messages")
             #endif
             .searchFetch(store, query, into: $search)
-            .refreshable { await store.refreshSessions() }
+            .refreshable {
+                if grouped {
+                    groupsRefresh += 1
+                } else {
+                    await store.refreshSessions()
+                    await screen?.refresh()
+                }
+            }
+            // On the list, which is always drawn: the card's own row is empty until the status arrives.
+            .task(id: profile) {
+                screen = ScreenStore(gateway: store.gateway, profile: profile)
+                await screen?.refresh()
+            }
             .renameAlert(store, $renaming)
             .sheet(isPresented: $showArchived) { ArchivedChats(store: store) { selection = $0 } }
             .sheet(isPresented: $showArtifacts) {
@@ -254,13 +284,13 @@ struct MainView: View {
             }
             .navigationTitle(store.profile.flatMap { bots.bot(named: $0)?.label } ?? "Hermes")
             .toolbar {
-                #if os(iOS)
-                // The screen of the profile picked on the rail, the same one its bot's chat opens.
                 ToolbarItem(placement: .primaryAction) {
-                    NavigationLink { ScreenView(gateway: store.gateway, profile: profile) } label: { Image(systemName: "display") }
-                        .accessibilityLabel("Screen")
+                    Button { grouped.toggle() } label: { Image(systemName: grouped ? "rectangle.stack.fill" : "rectangle.stack") }
+                        .accessibilityLabel("Group by profile")
+                        .accessibilityAddTraits(grouped ? .isSelected : [])
+                        .keyboardShortcut("g", modifiers: [.command, .shift])
+                        .help("Group by profile (⇧⌘G)")
                 }
-                #endif
                 ToolbarItem(placement: .primaryAction) {
                     Button { newChat() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("New chat")
@@ -280,7 +310,7 @@ struct MainView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 0) {
-                    ProfileRail(bots: bots, profile: $profile)
+                    if !grouped { ProfileRail(bots: bots, profile: $profile) }
                     ConnectionBanner(gateway: store.gateway)
                 }
             }
@@ -345,6 +375,12 @@ struct MainView: View {
         if let name = store.profile { bots.track(runtime: store.runtimeId, bot: name, running: store.running) }
     }
 
+    /// A chat of another profile opens in that profile's view, as a jump from Artifacts does.
+    private func open(_ id: String, in name: String) {
+        profile = name
+        jump = id
+    }
+
     private func newChat() {
         if selection == Self.newChat { Task { await store.open(nil) } }
         selection = Self.newChat
@@ -357,8 +393,10 @@ struct ProfileRail: View {
     let bots: BotStore
     @Binding var profile: String
 
+    private var profiles: [Bot] { Self.profiles(bots) }
+
     /// A default profile hidden in Bot Mode still gets its home chip, so the rail can always return to it.
-    private var profiles: [Bot] {
+    static func profiles(_ bots: BotStore) -> [Bot] {
         bots.bots.contains { $0.isDefault } ? bots.bots : [Bot(name: Bot.defaultName)] + bots.bots
     }
 
@@ -410,6 +448,99 @@ struct ProfileRail: View {
 
     private func step(_ by: Int) {
         if let next = Bot.cycle(profiles, from: profile, by: by) { profile = next }
+    }
+}
+
+/// One profile's group in the grouped Chats list: a header that collapses it, its screen, then its chats.
+struct ProfileGroup<Rows: View>: View {
+    let bot: Bot
+    let bots: BotStore
+    let chats: ChatStore
+    /// The profile on screen: its rows are the list's own, selectable and with their swipe actions.
+    let current: Bool
+    let refresh: Int
+    let open: (String) -> Void
+    @ViewBuilder let currentRows: ([SessionRow]) -> Rows
+    /// Collapsed profile names, one per line; groups start expanded.
+    @AppStorage("chatsCollapsed") private var collapsed = ""
+    @State private var screen: ScreenStore?
+    /// Chats shown before "Show more", paged like the desktop's groups.
+    @State private var limit = 5
+
+    private var expanded: Bool { !collapsed.split(separator: "\n").contains { $0 == bot.name } }
+
+    var body: some View {
+        Section {
+            if expanded {
+                #if os(iOS)
+                if let screen { ScreenCard(store: screen) }
+                #endif
+                let all = chats.pinnedSessions + chats.unpinnedSessions
+                let shown = Array(all.prefix(limit))
+                if current {
+                    currentRows(shown)
+                } else {
+                    ForEach(shown) { s in
+                        Button { open(s.id) } label: {
+                            SessionRowView(session: s, unread: chats.unread[s.id] != nil, live: chats.live[s.id], preview: chats.preview(of: s))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Theme.sidebar)
+                    }
+                }
+                if all.count > limit {
+                    Button("Show more (\(all.count - limit))") { limit += 5 }
+                        .font(.caption)
+                        .foregroundStyle(Theme.primary)
+                        .listRowBackground(Theme.sidebar)
+                }
+            }
+        } header: {
+            header
+                // On the header, which is always drawn: a collapsed group has no rows to hang this on.
+                .task(id: refresh) {
+                    if refresh > 0 || !chats.sessionsLoaded { await chats.refreshSessions() }
+                    let screen = self.screen ?? ScreenStore(gateway: chats.gateway, profile: bot.name)
+                    self.screen = screen
+                    await screen.refresh()
+                }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button {
+                var names = collapsed.split(separator: "\n").map(String.init).filter { $0 != bot.name }
+                if expanded { names.append(bot.name) }
+                collapsed = names.joined(separator: "\n")
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    if bot.isDefault {
+                        Image(systemName: "house").frame(width: 22, height: 22)
+                    } else {
+                        BotAvatar(bot: bot, bots: bots, size: 22)
+                    }
+                    Text(bot.label).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.foreground)
+                    if !chats.sessions.isEmpty {
+                        Text("\(chats.sessions.count)").font(.caption).foregroundStyle(Theme.muted)
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(bot.label), \(expanded ? "expanded" : "collapsed")")
+            .accessibilityHint("Shows or hides this profile's chats")
+            Button { open(MainView.newChat) } label: { Image(systemName: "square.and.pencil") }
+                .buttonStyle(.plain)
+                .accessibilityLabel("New chat with \(bot.label)")
+        }
+        .foregroundStyle(Theme.muted)
+        .textCase(nil)
     }
 }
 
