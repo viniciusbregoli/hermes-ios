@@ -6,6 +6,19 @@ A native SwiftUI client for [Hermes Agent](https://github.com/NousResearch/herme
 
 It's a personal project: it isn't on the App Store, and it's installed from Xcode.
 
+<p>
+  <img src="assets/chat.png" width="240" alt="A chat: grouped tool calls, then a reply with a table, a code block, a note callout and a changed files card">
+  <img src="assets/chats.png" width="240" alt="The chat list with a pinned chat and Working and Needs you pills">
+  <img src="assets/activity.png" width="240" alt="The Activity tab with an approval, two working chats and a background command">
+</p>
+<p>
+  <img src="assets/bots.png" width="240" alt="The Bots tab listing each Hermes profile">
+  <img src="assets/theme-matrix.png" width="240" alt="A chat in the Matrix theme">
+  <img src="assets/streaming.gif" width="240" alt="A reply streaming in after two web tool calls">
+</p>
+
+The screenshots use invented demo chats from a mock gateway.
+
 ## What it does
 
 - **Chats**: streaming replies with a calm timeline in the style of T3 Code (grouped tool calls, "Worked for…" folds, a floating Working capsule with Stop), full markdown with tables, callouts and code blocks, images and files the agent sends (`MEDIA:` tags), and per-chat drafts.
