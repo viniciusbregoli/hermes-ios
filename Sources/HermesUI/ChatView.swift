@@ -684,6 +684,7 @@ struct RequestCard: View {
     let request: ServerRequest
     let answer: (JSON) -> Void
     @State private var text = ""
+    @State private var identifier = ""
     @State private var answers: [String: String] = [:]
 
     var body: some View {
@@ -691,6 +692,8 @@ struct RequestCard: View {
             switch request.method {
             case "approval": approval
             case "clarify": clarify
+            case "vault.save_login": saveLogin
+            case "vault.unlock_prompt", "vault.code": vaultPrompt
             default: secretPrompt
             }
         }
@@ -771,6 +774,71 @@ struct RequestCard: View {
                     .disabled(text.isEmpty)
                 Spacer()
                 Button { answer(["value": ""]) } label: { Text("Decline").tapTarget() }.keyboardShortcut(.cancelAction)
+            }
+        }
+    }
+}
+
+// The vault prompts keep logins out of the chat: the gateway fills them into the page and the model never sees them.
+extension RequestCard {
+    private var saveLogin: some View {
+        let p = request.params
+        let send = { answer(ServerRequest.loginAnswer(identifier: identifier.trimmingCharacters(in: .whitespaces), password: text)) }
+        let ready = !identifier.trimmingCharacters(in: .whitespaces).isEmpty && !text.isEmpty
+        return Group {
+            Label("Save your \(p["site"]?.string ?? "site") login?", systemImage: "lock.shield")
+                .font(.subheadline.weight(.semibold))
+            Text("Hermes reached a sign-in page at \(p["origin"]?.string ?? "a site") and has no login for it. It is encrypted on the gateway and filled into the page without the model seeing the password.")
+                .font(.caption).foregroundStyle(Theme.muted)
+            TextField("Email or username", text: $identifier)
+                .textContentType(.username)
+                .noAutocorrect()
+                .textFieldStyle(.roundedBorder)
+            SecureField("Password", text: $text)
+                .textContentType(.password)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { if ready { send() } }
+            HStack {
+                Button("Save & sign in", action: send)
+                    .buttonStyle(.prominent)
+                    .disabled(!ready)
+                Spacer()
+                Button { answer(["value": ""]) } label: { Text("Don't save").tapTarget() }.keyboardShortcut(.cancelAction)
+            }
+        }
+    }
+
+    /// The master password of a password manager, or a one-time code; both answer a single value.
+    private var vaultPrompt: some View {
+        let p = request.params
+        let unlock = request.method == "vault.unlock_prompt"
+        let name = p["display_name"]?.string ?? "your password manager"
+        let site = p["site"]?.string?.nonEmpty ?? "the site"
+        let send = { answer(["value": .string(text)]) }
+        return Group {
+            Label(unlock ? "Unlock \(name)" : "Verification code for \(site)", systemImage: unlock ? "lock.shield" : "number")
+                .font(.subheadline.weight(.semibold))
+            Text(unlock ? "The agent wants to sign in with a login saved in \(name). The master password goes straight to \(name) on the gateway and is never stored or shown to the agent."
+                 : "\(site.prefix(1).uppercased() + site.dropFirst()) is asking for a one-time code. Hermes types it into the page; the model never sees it."
+                    + (p["hint"]?.string?.nonEmpty.map { "\n\($0)" } ?? ""))
+                .font(.caption).foregroundStyle(Theme.muted)
+            Group {
+                // A code is shown as typed so typos are visible.
+                if unlock {
+                    SecureField("Master password", text: $text).textContentType(.password)
+                } else {
+                    TextField("Code", text: $text).textContentType(.oneTimeCode).noAutocorrect()
+                }
+            }
+            .textFieldStyle(.roundedBorder)
+            .onSubmit { if !text.isEmpty { send() } }
+            HStack {
+                Button(unlock ? "Unlock" : "Enter code", action: send)
+                    .buttonStyle(.prominent)
+                    .disabled(text.isEmpty)
+                Spacer()
+                Button { answer(["value": ""]) } label: { Text(unlock ? "Keep locked" : "Skip").tapTarget() }
+                    .keyboardShortcut(.cancelAction)
             }
         }
     }
