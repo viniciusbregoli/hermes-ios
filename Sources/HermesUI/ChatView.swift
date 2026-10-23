@@ -789,7 +789,7 @@ extension RequestCard {
             Label("Save your \(p["site"]?.string ?? "site") login?", systemImage: "lock.shield")
                 .font(.subheadline.weight(.semibold))
             Text("Hermes reached a sign-in page at \(p["origin"]?.string ?? "a site") and has no login for it. It is encrypted on the gateway and filled into the page without the model seeing the password.")
-                .font(.caption).foregroundStyle(Theme.muted)
+                .font(.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
             TextField("Email or username", text: $identifier)
                 .textContentType(.username)
                 .noAutocorrect()
@@ -821,7 +821,7 @@ extension RequestCard {
             Text(unlock ? "The agent wants to sign in with a login saved in \(name). The master password goes straight to \(name) on the gateway and is never stored or shown to the agent."
                  : "\(site.prefix(1).uppercased() + site.dropFirst()) is asking for a one-time code. Hermes types it into the page; the model never sees it."
                     + (p["hint"]?.string?.nonEmpty.map { "\n\($0)" } ?? ""))
-                .font(.caption).foregroundStyle(Theme.muted)
+                .font(.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
             Group {
                 // A code is shown as typed so typos are visible.
                 if unlock {
