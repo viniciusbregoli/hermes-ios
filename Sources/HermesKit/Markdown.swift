@@ -83,7 +83,36 @@ public enum Markdown {
         }
         // A bare list marker such as "4." parses to an empty list item, which would show nothing at all.
         if root.children.isEmpty, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return plain() }
-        return finish(root)
+        return showCodeImages(finish(root))
+    }
+
+    /// An image path written as inline code (`/tmp/chart.png`) also shows the image, in a block after its paragraph,
+    /// unless the reply already shows that file. Agents often name the file they made instead of using a `MEDIA:` tag.
+    private static func showCodeImages(_ doc: MarkdownNode) -> MarkdownNode {
+        var shown = Set<URL>()
+        func collect(_ n: MarkdownNode) { shown.formUnion(n.media); n.children.forEach(collect) }
+        collect(doc)
+        func walk(_ n: MarkdownNode) -> MarkdownNode {
+            var n = n
+            n.children = n.children.flatMap { c -> [MarkdownNode] in
+                let c = walk(c)
+                guard c.kind == .paragraph else { return [c] }
+                let urls = codeImages(in: c.text).filter { shown.insert($0).inserted }
+                return urls.isEmpty ? [c] : [c, MarkdownNode(kind: .media, media: urls)]
+            }
+            return n
+        }
+        return walk(doc)
+    }
+
+    private static func codeImages(in text: AttributedString) -> [URL] {
+        text.runs.compactMap { run in
+            guard run.inlinePresentationIntent?.contains(.code) == true else { return nil }
+            let s = String(text[run.range].characters).trimmingCharacters(in: .whitespaces)
+            guard s.hasPrefix("/") || s.hasPrefix("~/"), !s.contains("\n"), Media.kind(of: s) == .image,
+                  !Artifacts.isPlaceholder(s) else { return nil }
+            return URL(string: Media.href(for: s))
+        }
     }
 
     private static func insert(_ text: AttributedString, path: [PresentationIntent.IntentType], into node: inout MarkdownNode) {
