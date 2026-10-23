@@ -318,6 +318,9 @@ enum ActivityFold {
         case "approval": p["command"]?.string?.nonEmpty ?? p["description"]?.string
         case "clarify": p["questions"]?.array?.first?["question"]?.string ?? p["question"]?.string
         case "sudo": p["command"]?.string
+        case "vault.unlock_prompt": "Unlock \(p["display_name"]?.string ?? "password manager")"
+        case "vault.save_login": "Save your \(p["site"]?.string ?? "site") login?"
+        case "vault.code": "Verification code for \(p["site"]?.string?.nonEmpty ?? "a site")"
         default: p["prompt"]?.string?.nonEmpty ?? p["env_var"]?.string
         }
         return oneLine(text ?? "")

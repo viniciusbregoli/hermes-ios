@@ -26,7 +26,7 @@ public struct GatewayEvent: Sendable {
 /// A request the server sends us (approval, clarify, sudo, ...). Answer it with `Gateway.respond`.
 public struct ServerRequest: Identifiable, Hashable, Sendable {
     /// The methods that ask the user something; the others are desktop-only surfaces.
-    static let prompts: Set<String> = ["approval", "clarify", "sudo", "secret"]
+    static let prompts: Set<String> = ["approval", "clarify", "sudo", "secret", "vault.unlock_prompt", "vault.save_login", "vault.code"]
     public let rpcId: JSON
     public let method: String
     public let params: JSON
@@ -37,6 +37,12 @@ public struct ServerRequest: Identifiable, Hashable, Sendable {
         self.rpcId = rpcId
         self.method = method
         self.params = params
+    }
+
+    /// `vault.save_login`'s answer: the login as a JSON string, which the gateway hands to the vault, never the model.
+    public static func loginAnswer(identifier: String, password: String) -> JSON {
+        let login = (try? JSON.object(["identifier": .string(identifier), "password": .string(password)]).data()) ?? Data()
+        return ["value": .string(String(decoding: login, as: UTF8.self))]
     }
 }
 
