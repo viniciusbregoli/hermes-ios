@@ -297,3 +297,18 @@ private actor Sent {
     var calls: [Call] = []
     func add(_ method: String, _ params: [String: JSON]) { calls.append(Call(method: method, params: params)) }
 }
+
+struct VaultPromptTests {
+    @Test func vaultPromptsReachTheUserWithTheirOwnLabels() {
+        #expect(["vault.unlock_prompt", "vault.save_login", "vault.code"].allSatisfy(ServerRequest.prompts.contains))
+        let save = ServerRequest(rpcId: "1", method: "vault.save_login", params: ["origin": "https://x.com", "site": "x.com"])
+        #expect(ActivityFold.question(save) == "Save your x.com login?")
+        let code = ServerRequest(rpcId: "2", method: "vault.code", params: ["site": .null])
+        #expect(ActivityFold.question(code) == "Verification code for a site")
+    }
+
+    @Test func loginAnswerIsTheLoginAsJSON() throws {
+        let value = try #require(ServerRequest.loginAnswer(identifier: "me@x.com", password: "p\"w").object?["value"]?.string)
+        #expect(try JSON.parse(Data(value.utf8)) == ["identifier": "me@x.com", "password": "p\"w"])
+    }
+}
