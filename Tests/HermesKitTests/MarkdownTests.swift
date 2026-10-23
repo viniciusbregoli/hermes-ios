@@ -107,6 +107,17 @@ struct MarkdownTests {
         #expect(links == [URL(string: "https://e.com/p.png")!, URL(string: "hermes-media:/srv/r.pdf")!])
     }
 
+    @Test func inlineCodeImagePathsShowTheImage() {
+        let doc = Markdown.parse("Image file: `/home/u/out/chart.png`\n\n- also `~/a.jpg`\n\nScript: `/tmp/make.py`, example `/path/to/x.png`")
+        #expect(kinds(doc) == [.paragraph, .media, .list(ordered: false), .paragraph])
+        #expect(doc.children[0].plainText == "Image file: /home/u/out/chart.png")
+        #expect(doc.children[1].media == [URL(string: "hermes-media:/home/u/out/chart.png")!])
+        #expect(doc.children[2].children[0].children.map(\.kind) == [.paragraph, .media])
+
+        let tagged = Markdown.parse("MEDIA:/tmp/c.png\n\nSaved to `/tmp/c.png`.\n\n```\n`/tmp/d.png`\n```")
+        #expect(kinds(tagged) == [.media, .paragraph, .code(language: nil)])
+    }
+
     @Test func unclosedFenceStaysCode() {
         let doc = Markdown.parse("Intro\n\n```swift\nlet a = 1")
         #expect(kinds(doc) == [.paragraph, .code(language: "swift")])
